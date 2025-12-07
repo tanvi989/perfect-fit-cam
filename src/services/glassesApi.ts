@@ -27,7 +27,12 @@ export interface LandmarkMeasurements {
 
 export interface LandmarksDetectResponse {
   success: boolean;
-  mm: LandmarkMeasurements;
+  landmarks: {
+    mm: LandmarkMeasurements;
+    pixel?: any;
+    scale?: any;
+    region_points?: any;
+  };
 }
 
 async function dataURLtoBlob(dataUrl: string): Promise<Blob> {
