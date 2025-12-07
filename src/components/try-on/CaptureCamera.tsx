@@ -19,16 +19,17 @@ export function CaptureCamera() {
   const [isCapturing, setIsCapturing] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStep, setProcessingStep] = useState('');
+  const [isCameraReady, setIsCameraReady] = useState(false);
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
   const { setCapturedData } = useCaptureData();
 
   const validationState = useFaceDetection({
     videoRef,
     canvasRef,
-    isActive: cameraState === 'granted' && !isCapturing && !isProcessing,
+    isActive: cameraState === 'granted' && isCameraReady && !isCapturing && !isProcessing,
   });
 
-  // Track video dimensions
+  // Track video dimensions and ready state
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -40,8 +41,17 @@ export function CaptureCamera() {
       });
     };
 
+    const handleCanPlay = () => {
+      setIsCameraReady(true);
+    };
+
     video.addEventListener('loadedmetadata', handleLoadedMetadata);
-    return () => video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+    video.addEventListener('canplay', handleCanPlay);
+    
+    return () => {
+      video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+      video.removeEventListener('canplay', handleCanPlay);
+    };
   }, [videoRef]);
 
   // Capture and process image
@@ -171,12 +181,24 @@ export function CaptureCamera() {
       />
       <canvas ref={canvasRef} className="hidden" />
 
+      {/* Camera initializing overlay */}
+      {!isCameraReady && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black z-30">
+          <div className="text-center space-y-6">
+            <Loader2 className="h-16 w-16 text-primary animate-spin mx-auto" />
+            <p className="text-white/80 text-lg font-medium">Initializing camera...</p>
+          </div>
+        </div>
+      )}
+
       {/* Face guide overlay with oval */}
-      <FaceGuideOverlay
-        isValid={validationState.allChecksPassed}
-        faceDetected={validationState.faceDetected}
-        validationChecks={validationState.validationChecks}
-      />
+      {isCameraReady && (
+        <FaceGuideOverlay
+          isValid={validationState.allChecksPassed}
+          faceDetected={validationState.faceDetected}
+          validationChecks={validationState.validationChecks}
+        />
+      )}
 
       {/* Countdown overlay */}
       {countdown !== null && countdown > 0 && !isProcessing && (
