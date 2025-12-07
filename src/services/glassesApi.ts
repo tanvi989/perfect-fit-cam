@@ -1,4 +1,4 @@
-const API_BASE = 'http://34.121.153.224:8000';
+const API_BASE = 'https://api.multifolks.aonetech.in';
 
 export interface GlassesDetectResponse {
   success: boolean;
