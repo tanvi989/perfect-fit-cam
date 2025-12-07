@@ -5,7 +5,7 @@ import { MeasurementsTab } from '@/components/try-on/MeasurementsTab';
 import { FramesTab } from '@/components/try-on/FramesTab';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
-import { ArrowLeft, Ruler, Glasses } from 'lucide-react';
+import { ArrowLeft, Ruler, Glasses, RefreshCw } from 'lucide-react';
 
 export default function Results() {
   const navigate = useNavigate();
@@ -26,21 +26,31 @@ export default function Results() {
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b border-border">
-        <div className="container max-w-4xl mx-auto px-4 py-4 flex items-center gap-4">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={() => navigate('/')}
-            className="shrink-0"
-          >
-            <ArrowLeft className="h-5 w-5" />
-          </Button>
-          <div>
-            <h1 className="text-xl font-semibold text-foreground">Results</h1>
-            <p className="text-sm text-muted-foreground">
-              Your face measurements and frame selection
-            </p>
+        <div className="container max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => navigate('/')}
+              className="shrink-0"
+            >
+              <ArrowLeft className="h-5 w-5" />
+            </Button>
+            <div>
+              <h1 className="text-xl font-semibold text-foreground">Results</h1>
+              <p className="text-sm text-muted-foreground">
+                Your face measurements and frame selection
+              </p>
+            </div>
           </div>
+          <Button
+            variant="outline"
+            onClick={() => navigate('/')}
+            className="flex items-center gap-2"
+          >
+            <RefreshCw className="h-4 w-4" />
+            <span>Retake Photo</span>
+          </Button>
         </div>
       </header>
 
