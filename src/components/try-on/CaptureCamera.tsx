@@ -19,17 +19,16 @@ export function CaptureCamera() {
   const [isCapturing, setIsCapturing] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStep, setProcessingStep] = useState('');
-  const [isCameraReady, setIsCameraReady] = useState(false);
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
   const { setCapturedData } = useCaptureData();
 
   const validationState = useFaceDetection({
     videoRef,
     canvasRef,
-    isActive: cameraState === 'granted' && isCameraReady && !isCapturing && !isProcessing,
+    isActive: cameraState === 'granted' && !isCapturing && !isProcessing,
   });
 
-  // Track video dimensions and ready state
+  // Track video dimensions
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -41,26 +40,14 @@ export function CaptureCamera() {
       });
     };
 
-    const handleCanPlay = () => {
-      setIsCameraReady(true);
-    };
-
-    // Check if video is already ready (event may have fired before listener attached)
-    if (video.readyState >= 3) {
-      setIsCameraReady(true);
-    }
     if (video.videoWidth > 0) {
       setVideoSize({ width: video.videoWidth, height: video.videoHeight });
     }
 
     video.addEventListener('loadedmetadata', handleLoadedMetadata);
-    video.addEventListener('canplay', handleCanPlay);
-    video.addEventListener('playing', handleCanPlay);
     
     return () => {
       video.removeEventListener('loadedmetadata', handleLoadedMetadata);
-      video.removeEventListener('canplay', handleCanPlay);
-      video.removeEventListener('playing', handleCanPlay);
     };
   }, [videoRef, cameraState]);
 
@@ -191,24 +178,12 @@ export function CaptureCamera() {
       />
       <canvas ref={canvasRef} className="hidden" />
 
-      {/* Camera initializing overlay */}
-      {!isCameraReady && (
-        <div className="absolute inset-0 flex items-center justify-center bg-black z-30">
-          <div className="text-center space-y-6">
-            <Loader2 className="h-16 w-16 text-primary animate-spin mx-auto" />
-            <p className="text-white/80 text-lg font-medium">Initializing camera...</p>
-          </div>
-        </div>
-      )}
-
-      {/* Face guide overlay with oval */}
-      {isCameraReady && (
-        <FaceGuideOverlay
-          isValid={validationState.allChecksPassed}
-          faceDetected={validationState.faceDetected}
-          validationChecks={validationState.validationChecks}
-        />
-      )}
+      {/* Face guide overlay with oval - always visible */}
+      <FaceGuideOverlay
+        isValid={validationState.allChecksPassed}
+        faceDetected={validationState.faceDetected}
+        validationChecks={validationState.validationChecks}
+      />
 
       {/* Countdown overlay */}
       {countdown !== null && countdown > 0 && !isProcessing && (
