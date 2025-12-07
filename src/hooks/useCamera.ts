@@ -11,6 +11,13 @@ export function useCamera({ onStreamReady }: UseCameraProps = {}) {
   const streamRef = useRef<MediaStream | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
+  const attachStream = useCallback(() => {
+    if (videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(console.error);
+    }
+  }, []);
+
   const requestCamera = useCallback(async () => {
     setCameraState('requesting');
     setError(null);
@@ -26,12 +33,7 @@ export function useCamera({ onStreamReady }: UseCameraProps = {}) {
       });
 
       streamRef.current = stream;
-      
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-
+      attachStream();
       setCameraState('granted');
       onStreamReady?.(stream);
     } catch (err) {
@@ -50,7 +52,7 @@ export function useCamera({ onStreamReady }: UseCameraProps = {}) {
         }
       }
     }
-  }, [onStreamReady]);
+  }, [onStreamReady, attachStream]);
 
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
@@ -67,6 +69,13 @@ export function useCamera({ onStreamReady }: UseCameraProps = {}) {
     requestCamera();
   }, []);
 
+  // Re-attach stream when video element changes (component re-renders)
+  useEffect(() => {
+    if (cameraState === 'granted' && streamRef.current) {
+      attachStream();
+    }
+  }, [cameraState, attachStream]);
+
   useEffect(() => {
     return () => {
       stopCamera();
@@ -77,6 +86,7 @@ export function useCamera({ onStreamReady }: UseCameraProps = {}) {
     cameraState,
     error,
     videoRef,
+    streamRef,
     requestCamera,
     stopCamera,
   };

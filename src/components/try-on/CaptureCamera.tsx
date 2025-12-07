@@ -11,7 +11,7 @@ import { toast } from 'sonner';
 
 export function CaptureCamera() {
   const navigate = useNavigate();
-  const { cameraState, error, videoRef, requestCamera } = useCamera();
+  const { cameraState, error, videoRef, streamRef, requestCamera } = useCamera();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [videoSize, setVideoSize] = useState({ width: 1280, height: 720 });
@@ -27,6 +27,17 @@ export function CaptureCamera() {
     canvasRef,
     isActive: cameraState === 'granted' && !isCapturing && !isProcessing,
   });
+
+  // Attach stream to video element when both are available
+  useEffect(() => {
+    const video = videoRef.current;
+    const stream = streamRef.current;
+    
+    if (video && stream && cameraState === 'granted') {
+      video.srcObject = stream;
+      video.play().catch(console.error);
+    }
+  }, [videoRef, streamRef, cameraState]);
 
   // Track video dimensions
   useEffect(() => {
