@@ -5,18 +5,9 @@ import { useFaceDetection } from '@/hooks/useFaceDetection';
 import { useCaptureData } from '@/context/CaptureContext';
 import { CameraPermission } from './CameraPermission';
 import { FaceGuideOverlay } from './FaceGuideOverlay';
-import { ValidationChecklist } from './ValidationChecklist';
-import { Camera, CheckCircle2, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react';
 import { detectGlasses, removeGlasses, detectLandmarks } from '@/services/glassesApi';
 import { toast } from 'sonner';
-
-const INSTRUCTIONS = [
-  { icon: '📍', text: 'Position your face within the oval guide' },
-  { icon: '🎯', text: 'Keep your head straight and centered' },
-  { icon: '💡', text: 'Ensure good lighting on your face' },
-  { icon: '✨', text: 'System will auto-capture when aligned' },
-  { icon: '⏱️', text: 'Hold still during the capture countdown' },
-];
 
 export function CaptureCamera() {
   const navigate = useNavigate();
@@ -168,88 +159,46 @@ export function CaptureCamera() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="flex flex-col lg:flex-row h-screen">
-        {/* Camera section */}
-        <div className="flex-1 relative bg-black" ref={containerRef}>
-          <video
-            ref={videoRef}
-            autoPlay
-            playsInline
-            muted
-            className="absolute inset-0 w-full h-full object-cover"
-            style={{ transform: 'scaleX(-1)' }}
-          />
-          <canvas ref={canvasRef} className="hidden" />
+    <div className="h-screen w-screen bg-black relative overflow-hidden" ref={containerRef}>
+      {/* Fullscreen camera */}
+      <video
+        ref={videoRef}
+        autoPlay
+        playsInline
+        muted
+        className="absolute inset-0 w-full h-full object-cover"
+        style={{ transform: 'scaleX(-1)' }}
+      />
+      <canvas ref={canvasRef} className="hidden" />
 
-          <FaceGuideOverlay
-            isValid={validationState.allChecksPassed}
-            faceDetected={validationState.faceDetected}
-          />
+      {/* Face guide overlay with oval */}
+      <FaceGuideOverlay
+        isValid={validationState.allChecksPassed}
+        faceDetected={validationState.faceDetected}
+        validationChecks={validationState.validationChecks}
+      />
 
-          {/* Countdown overlay */}
-          {countdown !== null && countdown > 0 && !isProcessing && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-              <div className="text-center">
-                <div className="text-8xl font-bold text-white animate-pulse">
-                  {countdown}
-                </div>
-                <p className="text-white/80 text-lg mt-2">Hold still...</p>
-              </div>
+      {/* Countdown overlay */}
+      {countdown !== null && countdown > 0 && !isProcessing && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/40 z-20">
+          <div className="text-center">
+            <div className="text-9xl font-bold text-white animate-pulse drop-shadow-lg">
+              {countdown}
             </div>
-          )}
-
-          {/* Processing overlay */}
-          {isProcessing && (
-            <div className="absolute inset-0 flex items-center justify-center bg-black/60">
-              <div className="text-center space-y-4">
-                <Loader2 className="h-16 w-16 text-white animate-spin mx-auto" />
-                <p className="text-white text-lg font-medium">{processingStep}</p>
-              </div>
-            </div>
-          )}
-
-          {/* Ready indicator */}
-          {validationState.allChecksPassed && countdown === null && !isProcessing && (
-            <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-medical-success/90 text-white px-4 py-2 rounded-full flex items-center gap-2">
-              <CheckCircle2 className="h-5 w-5" />
-              <span className="font-medium">Ready to capture</span>
-            </div>
-          )}
-        </div>
-
-        {/* Sidebar */}
-        <div className="w-full lg:w-96 bg-background border-t lg:border-t-0 lg:border-l border-border p-6 space-y-6 overflow-y-auto">
-          {/* Header */}
-          <div className="flex items-center gap-3">
-            <div className="p-2 bg-primary/10 rounded-lg">
-              <Camera className="h-6 w-6 text-primary" />
-            </div>
-            <div>
-              <h1 className="text-xl font-semibold text-foreground">Face Capture</h1>
-              <p className="text-sm text-muted-foreground">Follow the instructions below</p>
-            </div>
+            <p className="text-white/90 text-xl mt-4 font-medium">Hold still...</p>
           </div>
-
-          {/* Quick Instructions */}
-          <div className="bg-muted/50 rounded-xl p-4 space-y-3">
-            <h2 className="text-sm font-semibold text-foreground flex items-center gap-2">
-              📋 Quick Instructions
-            </h2>
-            <ul className="space-y-2">
-              {INSTRUCTIONS.map((instruction, index) => (
-                <li key={index} className="flex items-start gap-2 text-sm text-muted-foreground">
-                  <span>{instruction.icon}</span>
-                  <span>{instruction.text}</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-
-          {/* Validation checklist */}
-          <ValidationChecklist checks={validationState.validationChecks} />
         </div>
-      </div>
+      )}
+
+      {/* Processing overlay */}
+      {isProcessing && (
+        <div className="absolute inset-0 flex items-center justify-center bg-black/70 z-20">
+          <div className="text-center space-y-6">
+            <Loader2 className="h-20 w-20 text-white animate-spin mx-auto" />
+            <p className="text-white text-xl font-medium">{processingStep}</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -1,7 +1,7 @@
-import { TryOnApp } from '@/components/try-on/TryOnApp';
+import { CaptureCamera } from '@/components/try-on/CaptureCamera';
 
 const Index = () => {
-  return <TryOnApp />;
+  return <CaptureCamera />;
 };
 
 export default Index;
