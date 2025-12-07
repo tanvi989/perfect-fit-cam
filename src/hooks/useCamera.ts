@@ -62,6 +62,11 @@ export function useCamera({ onStreamReady }: UseCameraProps = {}) {
     }
   }, []);
 
+  // Auto-request camera on mount
+  useEffect(() => {
+    requestCamera();
+  }, []);
+
   useEffect(() => {
     return () => {
       stopCamera();
