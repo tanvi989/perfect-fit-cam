@@ -105,7 +105,7 @@ export function CaptureCamera() {
       setProcessingStep('Measuring face dimensions...');
       const measureResult = await detectLandmarks(processedImageDataUrl);
 
-      if (!measureResult.success || !measureResult.mm) {
+      if (!measureResult.success || !measureResult.landmarks?.mm) {
         throw new Error('Failed to get measurements');
       }
 
@@ -115,7 +115,7 @@ export function CaptureCamera() {
         processedImageDataUrl,
         glassesDetected,
         landmarks: validationState.landmarks,
-        measurements: measureResult.mm,
+        measurements: measureResult.landmarks.mm,
         timestamp: Date.now(),
       });
 
