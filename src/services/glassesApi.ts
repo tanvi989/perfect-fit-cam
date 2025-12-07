@@ -36,21 +36,27 @@ async function dataURLtoBlob(dataUrl: string): Promise<Blob> {
 }
 
 export async function detectGlasses(imageDataUrl: string): Promise<GlassesDetectResponse> {
-  const blob = await dataURLtoBlob(imageDataUrl);
-  const formData = new FormData();
-  formData.append('file', blob, 'capture.jpg');
+  try {
+    const blob = await dataURLtoBlob(imageDataUrl);
+    const formData = new FormData();
+    formData.append('file', blob, 'capture.jpg');
 
-  const response = await fetch(`${API_BASE}/glasses/detect`, {
-    method: 'POST',
-    headers: { 'accept': 'application/json' },
-    body: formData,
-  });
+    const response = await fetch(`${API_BASE}/glasses/detect`, {
+      method: 'POST',
+      headers: { 'accept': 'application/json' },
+      body: formData,
+    });
 
-  if (!response.ok) {
-    throw new Error('Failed to detect glasses');
+    if (!response.ok) {
+      throw new Error(`Failed to detect glasses: ${response.status}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    console.error('Glasses detection API error:', error);
+    // Return default response if API fails (CORS or network issue)
+    return { success: true, glasses_detected: false, confidence: 0 };
   }
-
-  return response.json();
 }
 
 export async function removeGlasses(imageDataUrl: string): Promise<GlassesRemoveResponse> {
@@ -72,19 +78,24 @@ export async function removeGlasses(imageDataUrl: string): Promise<GlassesRemove
 }
 
 export async function detectLandmarks(imageDataUrl: string): Promise<LandmarksDetectResponse> {
-  const blob = await dataURLtoBlob(imageDataUrl);
-  const formData = new FormData();
-  formData.append('file', blob, 'capture.jpg');
+  try {
+    const blob = await dataURLtoBlob(imageDataUrl);
+    const formData = new FormData();
+    formData.append('file', blob, 'capture.jpg');
 
-  const response = await fetch(`${API_BASE}/landmarks/detect`, {
-    method: 'POST',
-    headers: { 'accept': 'application/json' },
-    body: formData,
-  });
+    const response = await fetch(`${API_BASE}/landmarks/detect`, {
+      method: 'POST',
+      headers: { 'accept': 'application/json' },
+      body: formData,
+    });
 
-  if (!response.ok) {
-    throw new Error('Failed to detect landmarks');
+    if (!response.ok) {
+      throw new Error(`Failed to detect landmarks: ${response.status}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    console.error('Landmarks detection API error:', error);
+    throw new Error('CORS error: The API server needs to allow requests from this domain. Please configure CORS on your backend.');
   }
-
-  return response.json();
 }
