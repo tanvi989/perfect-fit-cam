@@ -60,21 +60,46 @@ export async function detectGlasses(imageDataUrl: string): Promise<GlassesDetect
 }
 
 export async function removeGlasses(imageDataUrl: string): Promise<GlassesRemoveResponse> {
-  const blob = await dataURLtoBlob(imageDataUrl);
-  const formData = new FormData();
-  formData.append('image', blob, 'capture.jpg');
+  try {
+    const blob = await dataURLtoBlob(imageDataUrl);
+    const formData = new FormData();
+    formData.append('image', blob, 'capture.jpg');
 
-  const response = await fetch(`${API_BASE}/glasses/remove`, {
-    method: 'POST',
-    headers: { 'accept': 'application/json' },
-    body: formData,
-  });
+    const response = await fetch(`${API_BASE}/glasses/remove`, {
+      method: 'POST',
+      body: formData,
+    });
 
-  if (!response.ok) {
-    throw new Error('Failed to remove glasses');
+    if (!response.ok) {
+      throw new Error(`Failed to remove glasses: ${response.status}`);
+    }
+
+    // Check content type - API might return image directly or JSON
+    const contentType = response.headers.get('content-type') || '';
+    
+    if (contentType.includes('image')) {
+      // API returns image directly - convert to base64
+      const imageBlob = await response.blob();
+      const reader = new FileReader();
+      const base64 = await new Promise<string>((resolve, reject) => {
+        reader.onloadend = () => {
+          const result = reader.result as string;
+          // Remove data URL prefix to get just base64
+          const base64Data = result.split(',')[1];
+          resolve(base64Data);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(imageBlob);
+      });
+      return { success: true, edited_image_base64: base64 };
+    }
+
+    // Otherwise parse as JSON
+    return response.json();
+  } catch (error) {
+    console.error('Glasses removal API error:', error);
+    throw new Error('Failed to remove glasses from image');
   }
-
-  return response.json();
 }
 
 export async function detectLandmarks(imageDataUrl: string): Promise<LandmarksDetectResponse> {
