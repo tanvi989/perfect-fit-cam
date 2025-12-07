@@ -56,14 +56,24 @@ export interface GlassesFrame {
 
 export type CameraState = 'requesting' | 'granted' | 'denied' | 'error';
 
+export interface ApiMeasurements {
+  pd_total: number;
+  pd_left: number;
+  pd_right: number;
+  nose_left: number;
+  nose_right: number;
+  nose_total: number;
+  fitting_height: number;
+  face_width: number;
+  face_height: number;
+  face_shape_ratio: number;
+}
+
 export interface CapturedData {
   imageDataUrl: string;
+  processedImageDataUrl: string; // After glasses removal if needed
+  glassesDetected: boolean;
   landmarks: FaceLandmarks;
-  pdMeasurement: {
-    value: number;
-    confidence: 'low' | 'medium' | 'high';
-    leftPD?: number;
-    rightPD?: number;
-  };
+  measurements: ApiMeasurements;
   timestamp: number;
 }

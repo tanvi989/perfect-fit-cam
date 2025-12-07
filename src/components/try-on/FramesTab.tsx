@@ -88,7 +88,7 @@ export function FramesTab() {
         
         <div className="relative rounded-lg overflow-hidden bg-black aspect-[4/3]">
           <img
-            src={capturedData.imageDataUrl}
+            src={capturedData.processedImageDataUrl}
             alt="Try-on preview"
             className="w-full h-full object-contain"
           />

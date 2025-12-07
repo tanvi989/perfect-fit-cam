@@ -2,12 +2,13 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCamera } from '@/hooks/useCamera';
 import { useFaceDetection } from '@/hooks/useFaceDetection';
-import { usePDMeasurement } from '@/hooks/usePDMeasurement';
 import { useCaptureData } from '@/context/CaptureContext';
 import { CameraPermission } from './CameraPermission';
 import { FaceGuideOverlay } from './FaceGuideOverlay';
 import { ValidationChecklist } from './ValidationChecklist';
-import { Camera, CheckCircle2 } from 'lucide-react';
+import { Camera, CheckCircle2, Loader2 } from 'lucide-react';
+import { detectGlasses, removeGlasses, detectLandmarks } from '@/services/glassesApi';
+import { toast } from 'sonner';
 
 const INSTRUCTIONS = [
   { icon: '📍', text: 'Position your face within the oval guide' },
@@ -25,19 +26,15 @@ export function CaptureCamera() {
   const [videoSize, setVideoSize] = useState({ width: 1280, height: 720 });
   const [countdown, setCountdown] = useState<number | null>(null);
   const [isCapturing, setIsCapturing] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingStep, setProcessingStep] = useState('');
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
   const { setCapturedData } = useCaptureData();
 
   const validationState = useFaceDetection({
     videoRef,
     canvasRef,
-    isActive: cameraState === 'granted' && !isCapturing,
-  });
-
-  const pdMeasurement = usePDMeasurement({
-    landmarks: validationState.landmarks,
-    videoWidth: videoSize.width,
-    videoHeight: videoSize.height,
+    isActive: cameraState === 'granted' && !isCapturing && !isProcessing,
   });
 
   // Track video dimensions
@@ -56,47 +53,72 @@ export function CaptureCamera() {
     return () => video.removeEventListener('loadedmetadata', handleLoadedMetadata);
   }, [videoRef]);
 
-  // Capture image from video
-  const captureImage = useCallback(() => {
+  // Capture and process image
+  const captureAndProcess = useCallback(async () => {
     const video = videoRef.current;
-    if (!video || !validationState.landmarks || !pdMeasurement) return;
+    if (!video || !validationState.landmarks) return;
 
-    const canvas = document.createElement('canvas');
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    setIsProcessing(true);
+    
+    try {
+      // Capture image from video
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Could not get canvas context');
 
-    // Draw mirrored image
-    ctx.translate(canvas.width, 0);
-    ctx.scale(-1, 1);
-    ctx.drawImage(video, 0, 0);
+      // Draw mirrored image
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(video, 0, 0);
 
-    const imageDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+      const imageDataUrl = canvas.toDataURL('image/jpeg', 0.9);
 
-    // Calculate confidence based on PD value range (typical adult PD is 54-74mm)
-    const pd = pdMeasurement.pdMillimeters;
-    let confidence: 'low' | 'medium' | 'high' = 'low';
-    if (pd >= 54 && pd <= 74) {
-      confidence = 'high';
-    } else if (pd >= 48 && pd <= 80) {
-      confidence = 'medium';
+      // Step 1: Detect glasses
+      setProcessingStep('Detecting glasses...');
+      const detectResult = await detectGlasses(imageDataUrl);
+      
+      let processedImageDataUrl = imageDataUrl;
+      let glassesDetected = false;
+
+      // Step 2: Remove glasses if detected
+      if (detectResult.success && detectResult.glasses_detected) {
+        glassesDetected = true;
+        setProcessingStep('Removing glasses...');
+        const removeResult = await removeGlasses(imageDataUrl);
+        if (removeResult.success && removeResult.edited_image_base64) {
+          processedImageDataUrl = `data:image/png;base64,${removeResult.edited_image_base64}`;
+        }
+      }
+
+      // Step 3: Get measurements from API
+      setProcessingStep('Measuring face dimensions...');
+      const measureResult = await detectLandmarks(processedImageDataUrl);
+
+      if (!measureResult.success || !measureResult.mm) {
+        throw new Error('Failed to get measurements');
+      }
+
+      // Save data and navigate
+      setCapturedData({
+        imageDataUrl,
+        processedImageDataUrl,
+        glassesDetected,
+        landmarks: validationState.landmarks,
+        measurements: measureResult.mm,
+        timestamp: Date.now(),
+      });
+
+      navigate('/results');
+    } catch (err) {
+      console.error('Processing error:', err);
+      toast.error('Failed to process image. Please try again.');
+      setIsCapturing(false);
+      setCountdown(null);
+      setIsProcessing(false);
     }
-
-    setCapturedData({
-      imageDataUrl,
-      landmarks: validationState.landmarks,
-      pdMeasurement: {
-        value: pdMeasurement.pdMillimeters,
-        confidence,
-        leftPD: pdMeasurement.pdMillimeters / 2,
-        rightPD: pdMeasurement.pdMillimeters / 2,
-      },
-      timestamp: Date.now(),
-    });
-
-    navigate('/results');
-  }, [videoRef, validationState.landmarks, pdMeasurement, setCapturedData, navigate]);
+  }, [videoRef, validationState.landmarks, setCapturedData, navigate]);
 
   // Auto-capture countdown when all checks pass
   useEffect(() => {
@@ -121,7 +143,7 @@ export function CaptureCamera() {
         setCountdown(countdown - 1);
       }, 1000);
     } else if (countdown === 0) {
-      captureImage();
+      captureAndProcess();
     }
 
     return () => {
@@ -129,7 +151,7 @@ export function CaptureCamera() {
         clearTimeout(countdownRef.current);
       }
     };
-  }, [countdown, captureImage]);
+  }, [countdown, captureAndProcess]);
 
   const handleRequestCamera = useCallback(() => {
     requestCamera();
@@ -166,7 +188,7 @@ export function CaptureCamera() {
           />
 
           {/* Countdown overlay */}
-          {countdown !== null && countdown > 0 && (
+          {countdown !== null && countdown > 0 && !isProcessing && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/40">
               <div className="text-center">
                 <div className="text-8xl font-bold text-white animate-pulse">
@@ -177,8 +199,18 @@ export function CaptureCamera() {
             </div>
           )}
 
+          {/* Processing overlay */}
+          {isProcessing && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/60">
+              <div className="text-center space-y-4">
+                <Loader2 className="h-16 w-16 text-white animate-spin mx-auto" />
+                <p className="text-white text-lg font-medium">{processingStep}</p>
+              </div>
+            </div>
+          )}
+
           {/* Ready indicator */}
-          {validationState.allChecksPassed && countdown === null && (
+          {validationState.allChecksPassed && countdown === null && !isProcessing && (
             <div className="absolute top-4 left-1/2 -translate-x-1/2 bg-medical-success/90 text-white px-4 py-2 rounded-full flex items-center gap-2">
               <CheckCircle2 className="h-5 w-5" />
               <span className="font-medium">Ready to capture</span>
