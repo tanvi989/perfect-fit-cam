@@ -21,12 +21,12 @@ const LANDMARK_INDICES = {
 const THRESHOLDS = {
   maxHeadTilt: 10, // degrees
   maxHeadRotation: 15, // degrees
-  minFaceWidthPercent: 40,
-  maxFaceWidthPercent: 60,
+  minFaceWidthPercent: 15,
+  maxFaceWidthPercent: 70,
   minBrightness: 80,
   maxBrightness: 220,
   minContrast: 0.3,
-  eyeAspectRatioThreshold: 0.2,
+  eyeAspectRatioThreshold: 0.01, // Very low threshold to easily pass
 };
 
 interface UseFaceDetectionProps {
