@@ -194,6 +194,14 @@ export function CaptureCamera() {
         isValid={validationState.allChecksPassed}
         faceDetected={validationState.faceDetected}
         validationChecks={validationState.validationChecks}
+        debugValues={{
+          faceWidthPercent: validationState.faceWidthPercent,
+          leftEyeAR: validationState.leftEyeAR,
+          rightEyeAR: validationState.rightEyeAR,
+          headTilt: validationState.headTilt,
+          headRotation: validationState.headRotation,
+          brightness: validationState.brightness,
+        }}
       />
 
       {/* Countdown overlay */}
