@@ -290,7 +290,15 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
         
         if (!isMounted) return;
 
-        localFaceMesh = new faceMeshModule.FaceMesh({
+        // Handle both default and named exports
+        const FaceMeshClass = faceMeshModule.FaceMesh || (faceMeshModule as any).default?.FaceMesh || (faceMeshModule as any).default;
+        
+        if (!FaceMeshClass) {
+          console.error('FaceMesh class not found in module:', Object.keys(faceMeshModule));
+          return;
+        }
+
+        localFaceMesh = new FaceMeshClass({
           locateFile: (file: string) => {
             return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
           },
