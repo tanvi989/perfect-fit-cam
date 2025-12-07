@@ -45,14 +45,24 @@ export function CaptureCamera() {
       setIsCameraReady(true);
     };
 
+    // Check if video is already ready (event may have fired before listener attached)
+    if (video.readyState >= 3) {
+      setIsCameraReady(true);
+    }
+    if (video.videoWidth > 0) {
+      setVideoSize({ width: video.videoWidth, height: video.videoHeight });
+    }
+
     video.addEventListener('loadedmetadata', handleLoadedMetadata);
     video.addEventListener('canplay', handleCanPlay);
+    video.addEventListener('playing', handleCanPlay);
     
     return () => {
       video.removeEventListener('loadedmetadata', handleLoadedMetadata);
       video.removeEventListener('canplay', handleCanPlay);
+      video.removeEventListener('playing', handleCanPlay);
     };
-  }, [videoRef]);
+  }, [videoRef, cameraState]);
 
   // Capture and process image
   const captureAndProcess = useCallback(async () => {
