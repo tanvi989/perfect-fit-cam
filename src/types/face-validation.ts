@@ -55,3 +55,15 @@ export interface GlassesFrame {
 }
 
 export type CameraState = 'requesting' | 'granted' | 'denied' | 'error';
+
+export interface CapturedData {
+  imageDataUrl: string;
+  landmarks: FaceLandmarks;
+  pdMeasurement: {
+    value: number;
+    confidence: 'low' | 'medium' | 'high';
+    leftPD?: number;
+    rightPD?: number;
+  };
+  timestamp: number;
+}
