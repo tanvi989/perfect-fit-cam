@@ -281,30 +281,33 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
   useEffect(() => {
     if (!isActive) return;
 
-    let FaceMesh: any;
+    let isMounted = true;
+    let localFaceMesh: any = null;
 
     const loadFaceMesh = async () => {
       try {
         const faceMeshModule = await import('@mediapipe/face_mesh');
-        FaceMesh = faceMeshModule.FaceMesh;
+        
+        if (!isMounted) return;
 
-        faceMeshRef.current = new FaceMesh({
+        localFaceMesh = new faceMeshModule.FaceMesh({
           locateFile: (file: string) => {
             return `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`;
           },
         });
 
-        faceMeshRef.current.setOptions({
+        localFaceMesh.setOptions({
           maxNumFaces: 2,
           refineLandmarks: true,
           minDetectionConfidence: 0.5,
           minTrackingConfidence: 0.5,
         });
 
-        faceMeshRef.current.onResults(processResults);
+        localFaceMesh.onResults(processResults);
+        faceMeshRef.current = localFaceMesh;
 
         const processFrame = async () => {
-          if (!videoRef.current || !faceMeshRef.current || !isActive) return;
+          if (!isMounted || !videoRef.current || !faceMeshRef.current) return;
           
           const now = performance.now();
           if (now - lastProcessTime.current < 100) { // Limit to ~10 FPS for performance
@@ -314,10 +317,16 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
           lastProcessTime.current = now;
 
           if (videoRef.current.readyState >= 2) {
-            await faceMeshRef.current.send({ image: videoRef.current });
+            try {
+              await faceMeshRef.current.send({ image: videoRef.current });
+            } catch (e) {
+              // Ignore errors if instance was closed
+            }
           }
           
-          animationFrameRef.current = requestAnimationFrame(processFrame);
+          if (isMounted) {
+            animationFrameRef.current = requestAnimationFrame(processFrame);
+          }
         };
 
         processFrame();
@@ -329,12 +338,23 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
     loadFaceMesh();
 
     return () => {
+      isMounted = false;
+      
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = undefined;
       }
-      if (faceMeshRef.current) {
-        faceMeshRef.current.close();
+      
+      // Safely close FaceMesh instance
+      if (localFaceMesh) {
+        try {
+          localFaceMesh.close();
+        } catch (e) {
+          // Instance may already be deleted, ignore error
+        }
+        localFaceMesh = null;
       }
+      faceMeshRef.current = null;
     };
   }, [isActive, videoRef, processResults]);
 
