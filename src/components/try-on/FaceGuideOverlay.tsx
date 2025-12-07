@@ -2,13 +2,23 @@ import { cn } from '@/lib/utils';
 import { ValidationCheck } from '@/types/face-validation';
 import { Check, X } from 'lucide-react';
 
+interface DebugValues {
+  faceWidthPercent: number;
+  leftEyeAR: number;
+  rightEyeAR: number;
+  headTilt: number;
+  headRotation: number;
+  brightness: number;
+}
+
 interface FaceGuideOverlayProps {
   isValid: boolean;
   faceDetected: boolean;
   validationChecks: ValidationCheck[];
+  debugValues?: DebugValues;
 }
 
-export function FaceGuideOverlay({ isValid, faceDetected, validationChecks }: FaceGuideOverlayProps) {
+export function FaceGuideOverlay({ isValid, faceDetected, validationChecks, debugValues }: FaceGuideOverlayProps) {
   return (
     <div className="absolute inset-0 pointer-events-none z-10">
       {/* Center guide oval */}
@@ -67,6 +77,51 @@ export function FaceGuideOverlay({ isValid, faceDetected, validationChecks }: Fa
               : "Adjust your position"}
         </span>
       </div>
+
+      {/* Debug panel - Live values */}
+      {debugValues && (
+        <div className="absolute top-20 right-4 bg-black/80 backdrop-blur-md rounded-xl p-3 text-xs font-mono text-white space-y-1">
+          <div className="text-yellow-400 font-bold mb-2">Debug Values</div>
+          <div className={cn(
+            debugValues.faceWidthPercent >= 40 && debugValues.faceWidthPercent <= 60 
+              ? "text-green-400" : "text-red-400"
+          )}>
+            Distance: {debugValues.faceWidthPercent.toFixed(1)}% 
+            <span className="text-white/50 ml-1">(need 40-60%)</span>
+          </div>
+          <div className={cn(
+            debugValues.leftEyeAR > 0.2 ? "text-green-400" : "text-red-400"
+          )}>
+            Left Eye AR: {debugValues.leftEyeAR.toFixed(3)}
+            <span className="text-white/50 ml-1">(need &gt;0.2)</span>
+          </div>
+          <div className={cn(
+            debugValues.rightEyeAR > 0.2 ? "text-green-400" : "text-red-400"
+          )}>
+            Right Eye AR: {debugValues.rightEyeAR.toFixed(3)}
+            <span className="text-white/50 ml-1">(need &gt;0.2)</span>
+          </div>
+          <div className={cn(
+            Math.abs(debugValues.headTilt) <= 10 ? "text-green-400" : "text-red-400"
+          )}>
+            Head Tilt: {debugValues.headTilt.toFixed(1)}°
+            <span className="text-white/50 ml-1">(need ±10°)</span>
+          </div>
+          <div className={cn(
+            Math.abs(debugValues.headRotation) <= 15 ? "text-green-400" : "text-red-400"
+          )}>
+            Head Rotation: {debugValues.headRotation.toFixed(1)}°
+            <span className="text-white/50 ml-1">(need ±15°)</span>
+          </div>
+          <div className={cn(
+            debugValues.brightness >= 80 && debugValues.brightness <= 220 
+              ? "text-green-400" : "text-red-400"
+          )}>
+            Brightness: {debugValues.brightness.toFixed(0)}
+            <span className="text-white/50 ml-1">(need 80-220)</span>
+          </div>
+        </div>
+      )}
 
       {/* Validation checklist at bottom */}
       <div className="absolute bottom-6 left-4 right-4">

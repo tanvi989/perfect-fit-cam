@@ -32,6 +32,8 @@ export interface FaceValidationState {
   contrast: number; // 0-1
   leftEyeOpen: boolean;
   rightEyeOpen: boolean;
+  leftEyeAR: number; // eye aspect ratio for debugging
+  rightEyeAR: number; // eye aspect ratio for debugging
   landmarks: FaceLandmarks | null;
   allChecksPassed: boolean;
   validationChecks: ValidationCheck[];

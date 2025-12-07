@@ -46,6 +46,8 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
     contrast: 0,
     leftEyeOpen: false,
     rightEyeOpen: false,
+    leftEyeAR: 0,
+    rightEyeAR: 0,
     landmarks: null,
     allChecksPassed: false,
     validationChecks: [],
@@ -224,6 +226,8 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
         contrast,
         leftEyeOpen: false,
         rightEyeOpen: false,
+        leftEyeAR: 0,
+        rightEyeAR: 0,
         landmarks: null,
       };
       
@@ -259,6 +263,8 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
       contrast,
       leftEyeOpen,
       rightEyeOpen,
+      leftEyeAR,
+      rightEyeAR,
       landmarks,
     };
 
