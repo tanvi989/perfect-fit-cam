@@ -109,13 +109,14 @@ export function CaptureCamera() {
         throw new Error('Failed to get measurements');
       }
 
-      // Save data and navigate
+      // Save data and navigate - include full API landmarks response
       setCapturedData({
         imageDataUrl,
         processedImageDataUrl,
         glassesDetected,
         landmarks: validationState.landmarks,
         measurements: measureResult.landmarks.mm,
+        apiLandmarks: measureResult.landmarks, // Store full response with region_points and scale
         timestamp: Date.now(),
       });
 

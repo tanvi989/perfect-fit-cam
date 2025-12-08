@@ -74,11 +74,40 @@ export interface ApiMeasurements {
   face_shape_ratio: number;
 }
 
+export interface RegionPoint {
+  x: number;
+  y: number;
+}
+
+export interface ApiRegionPoints {
+  left_eye_center: RegionPoint;
+  right_eye_center: RegionPoint;
+  left_eyebrow: RegionPoint;
+  right_eyebrow: RegionPoint;
+  nose_tip: RegionPoint;
+  left_ear: RegionPoint;
+  right_ear: RegionPoint;
+  chin: RegionPoint;
+}
+
+export interface ApiScale {
+  mm_per_pixel: number;
+  pixels_per_mm: number;
+}
+
+export interface ApiLandmarksResponse {
+  mm: ApiMeasurements;
+  pixel?: ApiMeasurements;
+  scale?: ApiScale;
+  region_points?: ApiRegionPoints;
+}
+
 export interface CapturedData {
   imageDataUrl: string;
   processedImageDataUrl: string; // After glasses removal if needed
   glassesDetected: boolean;
   landmarks: FaceLandmarks;
   measurements: ApiMeasurements;
+  apiLandmarks?: ApiLandmarksResponse; // Full API response with region_points and scale
   timestamp: number;
 }

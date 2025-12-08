@@ -2,7 +2,7 @@ import { cn } from '@/lib/utils';
 import type { GlassesFrame } from '@/types/face-validation';
 import { Glasses, CheckCircle, AlertCircle, Info } from 'lucide-react';
 
-type FitCategory = 'tooSmall' | 'small' | 'ideal' | 'large' | 'oversized';
+type FitCategory = 'tight' | 'perfect' | 'loose';
 
 interface GlassesSelectorProps {
   frames: GlassesFrame[];
@@ -13,20 +13,16 @@ interface GlassesSelectorProps {
 }
 
 function getFitCategory(frameWidthMm: number, faceWidthMm: number): FitCategory {
-  const diffMm = frameWidthMm - faceWidthMm;
-  if (diffMm <= -10) return 'tooSmall';
-  if (diffMm > -10 && diffMm < 0) return 'small';
-  if (diffMm >= 0 && diffMm <= 10) return 'ideal';
-  if (diffMm > 10 && diffMm <= 18) return 'large';
-  return 'oversized';
+  const diff = frameWidthMm - faceWidthMm;
+  if (diff <= -3) return 'tight';
+  if (diff >= 5) return 'loose';
+  return 'perfect';
 }
 
 const FIT_STYLES: Record<FitCategory, { bg: string; border: string; icon: typeof CheckCircle; iconColor: string }> = {
-  tooSmall: { bg: 'bg-destructive/10', border: 'border-destructive/50', icon: AlertCircle, iconColor: 'text-destructive' },
-  small: { bg: 'bg-orange-500/10', border: 'border-orange-500/50', icon: Info, iconColor: 'text-orange-500' },
-  ideal: { bg: 'bg-green-500/10', border: 'border-green-500/50', icon: CheckCircle, iconColor: 'text-green-500' },
-  large: { bg: 'bg-orange-500/10', border: 'border-orange-500/50', icon: Info, iconColor: 'text-orange-500' },
-  oversized: { bg: 'bg-destructive/10', border: 'border-destructive/50', icon: AlertCircle, iconColor: 'text-destructive' },
+  tight: { bg: 'bg-orange-500/10', border: 'border-orange-500/50', icon: AlertCircle, iconColor: 'text-orange-500' },
+  perfect: { bg: 'bg-green-500/10', border: 'border-green-500/50', icon: CheckCircle, iconColor: 'text-green-500' },
+  loose: { bg: 'bg-blue-500/10', border: 'border-blue-500/50', icon: Info, iconColor: 'text-blue-500' },
 };
 
 export function GlassesSelector({ frames, selectedFrame, onSelectFrame, faceWidthMm, className }: GlassesSelectorProps) {
@@ -97,11 +93,9 @@ export function GlassesSelector({ frames, selectedFrame, onSelectFrame, faceWidt
               const fitStyle = FIT_STYLES[fitCategory];
               const FitIcon = fitStyle.icon;
               const labels: Record<FitCategory, string> = {
-                tooSmall: 'Too Small',
-                small: 'Small',
-                ideal: 'Ideal Fit',
-                large: 'Large',
-                oversized: 'Oversized',
+                tight: 'Tight Fit',
+                perfect: 'Perfect Fit',
+                loose: 'Loose Fit',
               };
               return (
                 <span className={cn("flex items-center gap-1 text-xs font-medium", fitStyle.iconColor)}>

@@ -2,7 +2,7 @@ import { useState, useMemo } from 'react';
 import { useCaptureData } from '@/context/CaptureContext';
 import { GlassesSelector } from './GlassesSelector';
 import { Glasses, AlertCircle, CheckCircle, Info } from 'lucide-react';
-import type { GlassesFrame } from '@/types/face-validation';
+import type { GlassesFrame, ApiRegionPoints, ApiScale } from '@/types/face-validation';
 import { cn } from '@/lib/utils';
 
 // Import frame images
@@ -47,156 +47,140 @@ const FRAMES: GlassesFrame[] = [
   },
 ];
 
-type FitCategory = 'tooSmall' | 'small' | 'ideal' | 'large' | 'oversized';
+type FitCategory = 'tight' | 'perfect' | 'loose';
 
-interface FrameOverlayResult {
-  frameWidthPercent: number;
-  frameHeightPercent: number;
-  fitCategory: FitCategory;
-  fitScore: number;
-  positionX: number;
-  positionY: number;
-  rotation: number;
+interface FrameTransform {
+  x: number;           // Center X position in pixels
+  y: number;           // Center Y position in pixels
+  scale: number;       // Scale factor for the frame
+  rotationDeg: number; // Rotation in degrees
+  frameWidthPx: number; // Frame width in pixels
+  fit: FitCategory;    // Fit classification
 }
 
 /**
- * Compute how to draw the frame so it is "true to scale" on the user's face.
- * Uses PD in mm + PD in pixels to get mm ⇄ pixel scale.
+ * Compute frame transform using backend region_points and mm_per_pixel
  */
-function computeFrameOverlayFit(
+function computeFrameTransform(
   frameWidthMm: number,
   faceWidthMm: number,
-  pdMm: number,
-  pdPixelsNormalized: number, // PD as normalized 0-1 value
-  eyeCenterX: number,
-  eyeCenterY: number,
-  eyeDeltaX: number,
-  eyeDeltaY: number
-): FrameOverlayResult {
-  // 1. Get physical scale: mm -> normalized using PD
-  const normalizedPerMm = pdPixelsNormalized / pdMm;
-
-  // 2. True-to-scale frame width in normalized coordinates
-  const frameWidthNormalized = frameWidthMm * normalizedPerMm;
-  const frameWidthPercent = frameWidthNormalized * 100;
-
-  // 3. Fit classification based on frame width vs face width
-  const diffMm = frameWidthMm - faceWidthMm;
-
-  let fitCategory: FitCategory;
-  if (diffMm <= -10) {
-    fitCategory = 'tooSmall';
-  } else if (diffMm > -10 && diffMm < 0) {
-    fitCategory = 'small';
-  } else if (diffMm >= 0 && diffMm <= 10) {
-    fitCategory = 'ideal';
-  } else if (diffMm > 10 && diffMm <= 18) {
-    fitCategory = 'large';
+  regionPoints: ApiRegionPoints,
+  scale: ApiScale,
+  imageWidth: number,
+  imageHeight: number
+): FrameTransform {
+  // 1. Get eye centers from backend region_points (in pixels)
+  const leftEyeCenter = regionPoints.left_eye_center;
+  const rightEyeCenter = regionPoints.right_eye_center;
+  
+  // 2. Calculate eye midpoint (center between eyes)
+  const eyeMidpointX = (leftEyeCenter.x + rightEyeCenter.x) / 2;
+  const eyeMidpointY = (leftEyeCenter.y + rightEyeCenter.y) / 2;
+  
+  // 3. Calculate eyebrow baseline for vertical alignment
+  const leftEyebrow = regionPoints.left_eyebrow;
+  const rightEyebrow = regionPoints.right_eyebrow;
+  const eyebrowMidpointY = (leftEyebrow.y + rightEyebrow.y) / 2;
+  
+  // 4. Calculate rotation angle from eye line
+  const rotationRad = Math.atan2(
+    rightEyeCenter.y - leftEyeCenter.y,
+    rightEyeCenter.x - leftEyeCenter.x
+  );
+  const rotationDeg = rotationRad * (180 / Math.PI);
+  
+  // 5. Convert frame width from mm to pixels using mm_per_pixel
+  const frameWidthPx = frameWidthMm / scale.mm_per_pixel;
+  
+  // 6. Calculate scale factor (for rendering the frame image)
+  // Assuming the frame image has a reference width, we calculate scale
+  const scaleValue = frameWidthPx / imageWidth; // Normalized to image width
+  
+  // 7. Position frame - center horizontally on eye midpoint
+  // Vertically position slightly above eye line (between eyes and eyebrows)
+  const verticalOffset = (eyeMidpointY - eyebrowMidpointY) * 0.3; // 30% towards eyebrows
+  const x = eyeMidpointX;
+  const y = eyeMidpointY - verticalOffset;
+  
+  // 8. Fit classification based on frame width vs face width
+  const diff = frameWidthMm - faceWidthMm;
+  let fit: FitCategory;
+  if (diff <= -3) {
+    fit = 'tight';
+  } else if (diff >= 5) {
+    fit = 'loose';
   } else {
-    fitCategory = 'oversized';
+    fit = 'perfect';
   }
-
-  // Normalize to a score: -1 = much too small, 0 = ideal, +1 = much too big
-  const MIN_DIFF = -15;
-  const MAX_DIFF = 20;
-  const clampedDiff = Math.max(MIN_DIFF, Math.min(MAX_DIFF, diffMm));
-  const fitScore = ((clampedDiff - MIN_DIFF) / (MAX_DIFF - MIN_DIFF)) * 2 - 1;
-
-  // 4. Frame height (typical glasses are ~40% as tall as wide)
-  const ESTIMATED_FRAME_HEIGHT_RATIO = 0.4;
-  const frameHeightPercent = frameWidthPercent * ESTIMATED_FRAME_HEIGHT_RATIO;
-
-  // 5. Eye line positioning
-  // eyeLineFactor controls how high the frame sits relative to the eyes
-  // 0.45 = frame sits so eye line is at 45% from top (lower eyebrow visible)
-  const eyeLineFactor = 0.45;
-  const frameHeightNormalized = frameWidthNormalized * ESTIMATED_FRAME_HEIGHT_RATIO;
-  const verticalOffset = frameHeightNormalized * eyeLineFactor;
-
-  // Position so eye center aligns with the lens center
-  const positionX = eyeCenterX * 100;
-  const positionY = (eyeCenterY - verticalOffset / 2 + frameHeightNormalized / 2) * 100;
-
-  // Calculate rotation from eye positions
-  const rotation = Math.atan2(eyeDeltaY, eyeDeltaX) * (180 / Math.PI);
-
+  
   return {
-    frameWidthPercent,
-    frameHeightPercent,
-    fitCategory,
-    fitScore,
-    positionX,
-    positionY,
-    rotation,
+    x,
+    y,
+    scale: scaleValue,
+    rotationDeg,
+    frameWidthPx,
+    fit,
   };
 }
 
 const FIT_CONFIG: Record<FitCategory, { label: string; color: string; message: string; icon: typeof CheckCircle }> = {
-  tooSmall: {
-    label: 'Too Small',
-    color: 'text-destructive',
-    message: 'This frame will feel narrow on your face. Try a wider size.',
+  tight: {
+    label: 'Tight Fit',
+    color: 'text-orange-500',
+    message: 'This frame may feel narrow on your face.',
     icon: AlertCircle,
   },
-  small: {
-    label: 'Small',
-    color: 'text-orange-500',
-    message: 'This frame may feel slightly narrow.',
-    icon: Info,
-  },
-  ideal: {
-    label: 'Ideal Fit',
+  perfect: {
+    label: 'Perfect Fit',
     color: 'text-green-500',
-    message: 'Perfect fit for your face width!',
+    message: 'This frame fits your face perfectly!',
     icon: CheckCircle,
   },
-  large: {
-    label: 'Large',
-    color: 'text-orange-500',
-    message: 'This frame has a bold, larger look.',
+  loose: {
+    label: 'Loose Fit',
+    color: 'text-blue-500',
+    message: 'This frame has a relaxed, looser fit.',
     icon: Info,
-  },
-  oversized: {
-    label: 'Oversized',
-    color: 'text-destructive',
-    message: 'This is a fashion-oversized frame.',
-    icon: AlertCircle,
   },
 };
 
 export function FramesTab() {
   const { capturedData } = useCaptureData();
   const [selectedFrame, setSelectedFrame] = useState<GlassesFrame | null>(null);
+  const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
 
-  const overlayResult = useMemo(() => {
-    if (!selectedFrame || !capturedData?.landmarks || !capturedData?.measurements) {
+  // Get image dimensions when loaded
+  const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    setImageSize({ width: img.naturalWidth, height: img.naturalHeight });
+  };
+
+  const transform = useMemo(() => {
+    if (!selectedFrame || !capturedData?.apiLandmarks) {
       return null;
     }
 
-    const { landmarks, measurements } = capturedData;
+    const { apiLandmarks, measurements } = capturedData;
+    
+    // Check if we have required data from API
+    if (!apiLandmarks.region_points || !apiLandmarks.scale) {
+      console.warn('Missing region_points or scale from API');
+      return null;
+    }
 
-    // Calculate PD in normalized coordinates (distance between pupils)
-    const pdPixelsNormalized = Math.sqrt(
-      Math.pow(landmarks.rightEye.x - landmarks.leftEye.x, 2) +
-      Math.pow(landmarks.rightEye.y - landmarks.leftEye.y, 2)
-    );
+    if (imageSize.width === 0 || imageSize.height === 0) {
+      return null;
+    }
 
-    const eyeCenterX = (landmarks.leftEye.x + landmarks.rightEye.x) / 2;
-    const eyeCenterY = (landmarks.leftEye.y + landmarks.rightEye.y) / 2;
-    const eyeDeltaX = landmarks.rightEye.x - landmarks.leftEye.x;
-    const eyeDeltaY = landmarks.rightEye.y - landmarks.leftEye.y;
-
-    return computeFrameOverlayFit(
+    return computeFrameTransform(
       selectedFrame.width,
       measurements.face_width,
-      measurements.pd_total,
-      pdPixelsNormalized,
-      eyeCenterX,
-      eyeCenterY,
-      eyeDeltaX,
-      eyeDeltaY
+      apiLandmarks.region_points,
+      apiLandmarks.scale,
+      imageSize.width,
+      imageSize.height
     );
-  }, [selectedFrame, capturedData]);
+  }, [selectedFrame, capturedData, imageSize]);
 
   if (!capturedData) {
     return (
@@ -206,21 +190,25 @@ export function FramesTab() {
     );
   }
 
+  // Calculate glasses overlay style using pixel-based transform
   const getGlassesStyle = () => {
-    if (!overlayResult) return {};
+    if (!transform || imageSize.width === 0) return {};
+
+    // Frame height is approximately 40% of width
+    const frameHeightPx = transform.frameWidthPx * 0.4;
 
     return {
       position: 'absolute' as const,
-      left: `${overlayResult.positionX}%`,
-      top: `${overlayResult.positionY}%`,
-      width: `${overlayResult.frameWidthPercent}%`,
-      height: `${overlayResult.frameHeightPercent}%`,
-      transform: `translate(-50%, -50%) rotate(${overlayResult.rotation}deg)`,
+      left: `${(transform.x / imageSize.width) * 100}%`,
+      top: `${(transform.y / imageSize.height) * 100}%`,
+      width: `${(transform.frameWidthPx / imageSize.width) * 100}%`,
+      height: `${(frameHeightPx / imageSize.height) * 100}%`,
+      transform: `translate(-50%, -50%) rotate(${transform.rotationDeg}deg)`,
       transformOrigin: 'center center',
     };
   };
 
-  const fitInfo = overlayResult ? FIT_CONFIG[overlayResult.fitCategory] : null;
+  const fitInfo = transform ? FIT_CONFIG[transform.fit] : null;
   const FitIcon = fitInfo?.icon || CheckCircle;
 
   return (
@@ -234,7 +222,7 @@ export function FramesTab() {
           </div>
           
           {/* Fit indicator badge */}
-          {fitInfo && overlayResult && (
+          {fitInfo && transform && (
             <div className={cn("flex items-center gap-1.5 px-3 py-1 rounded-full bg-background border", fitInfo.color)}>
               <FitIcon className="h-4 w-4" />
               <span className="text-xs font-medium">{fitInfo.label}</span>
@@ -247,10 +235,11 @@ export function FramesTab() {
             src={capturedData.processedImageDataUrl}
             alt="Try-on preview"
             className="w-full h-full object-contain"
+            onLoad={handleImageLoad}
           />
           
           {/* Glasses overlay */}
-          {selectedFrame && overlayResult && (
+          {selectedFrame && transform && (
             <div 
               className="pointer-events-none"
               style={getGlassesStyle()}
@@ -272,7 +261,7 @@ export function FramesTab() {
         </div>
 
         {/* Fit message */}
-        {fitInfo && overlayResult && (
+        {fitInfo && transform && (
           <div className={cn("mt-3 flex items-center gap-2 text-sm", fitInfo.color)}>
             <FitIcon className="h-4 w-4 flex-shrink-0" />
             <span>{fitInfo.message}</span>
