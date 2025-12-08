@@ -64,45 +64,56 @@ interface FrameTransform {
 function computeFrameTransform(
   frameWidthMm: number,
   faceWidthMm: number,
-  regionPoints: ApiRegionPoints,
+  regionPoints: any, // Use any to handle varying API structures
   scale: ApiScale,
   imageWidth: number,
   imageHeight: number
-): FrameTransform {
-  // 1. Get eye centers from backend region_points (in pixels)
-  const leftEyeCenter = regionPoints.left_eye_center;
-  const rightEyeCenter = regionPoints.right_eye_center;
+): FrameTransform | null {
+  // Log the actual structure for debugging
+  console.log('Region points from API:', JSON.stringify(regionPoints, null, 2));
+  console.log('Scale from API:', JSON.stringify(scale, null, 2));
   
-  // 2. Calculate eye midpoint (center between eyes)
+  // Try different possible key names for eye centers
+  const leftEyeCenter = regionPoints.left_eye_center || regionPoints.leftEye || regionPoints.left_eye;
+  const rightEyeCenter = regionPoints.right_eye_center || regionPoints.rightEye || regionPoints.right_eye;
+  
+  if (!leftEyeCenter || !rightEyeCenter) {
+    console.warn('Missing eye center data in region_points:', Object.keys(regionPoints));
+    return null;
+  }
+  
+  // 1. Calculate eye midpoint (center between eyes)
   const eyeMidpointX = (leftEyeCenter.x + rightEyeCenter.x) / 2;
   const eyeMidpointY = (leftEyeCenter.y + rightEyeCenter.y) / 2;
   
-  // 3. Calculate eyebrow baseline for vertical alignment
-  const leftEyebrow = regionPoints.left_eyebrow;
-  const rightEyebrow = regionPoints.right_eyebrow;
-  const eyebrowMidpointY = (leftEyebrow.y + rightEyebrow.y) / 2;
+  // 2. Calculate eyebrow baseline for vertical alignment (with fallback)
+  const leftEyebrow = regionPoints.left_eyebrow || regionPoints.leftEyebrow;
+  const rightEyebrow = regionPoints.right_eyebrow || regionPoints.rightEyebrow;
+  const eyebrowMidpointY = (leftEyebrow && rightEyebrow) 
+    ? (leftEyebrow.y + rightEyebrow.y) / 2 
+    : eyeMidpointY - 20; // Fallback offset if no eyebrow data
   
-  // 4. Calculate rotation angle from eye line
+  // 3. Calculate rotation angle from eye line
   const rotationRad = Math.atan2(
     rightEyeCenter.y - leftEyeCenter.y,
     rightEyeCenter.x - leftEyeCenter.x
   );
   const rotationDeg = rotationRad * (180 / Math.PI);
   
-  // 5. Convert frame width from mm to pixels using mm_per_pixel
-  const frameWidthPx = frameWidthMm / scale.mm_per_pixel;
+  // 4. Convert frame width from mm to pixels using mm_per_pixel
+  const mmPerPixel = scale.mm_per_pixel || (scale as any).mmPerPixel || 0.3; // Fallback value
+  const frameWidthPx = frameWidthMm / mmPerPixel;
   
-  // 6. Calculate scale factor (for rendering the frame image)
-  // Assuming the frame image has a reference width, we calculate scale
-  const scaleValue = frameWidthPx / imageWidth; // Normalized to image width
+  // 5. Calculate scale factor (for rendering the frame image)
+  const scaleValue = frameWidthPx / imageWidth;
   
-  // 7. Position frame - center horizontally on eye midpoint
+  // 6. Position frame - center horizontally on eye midpoint
   // Vertically position slightly above eye line (between eyes and eyebrows)
-  const verticalOffset = (eyeMidpointY - eyebrowMidpointY) * 0.3; // 30% towards eyebrows
+  const verticalOffset = (eyeMidpointY - eyebrowMidpointY) * 0.3;
   const x = eyeMidpointX;
   const y = eyeMidpointY - verticalOffset;
   
-  // 8. Fit classification based on frame width vs face width
+  // 7. Fit classification based on frame width vs face width
   const diff = frameWidthMm - faceWidthMm;
   let fit: FitCategory;
   if (diff <= -3) {
