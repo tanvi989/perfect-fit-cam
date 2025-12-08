@@ -4,31 +4,45 @@ import { GlassesSelector } from './GlassesSelector';
 import { Glasses } from 'lucide-react';
 import type { GlassesFrame } from '@/types/face-validation';
 
-// Demo glasses frames (user will replace with their own)
-const DEMO_FRAMES: GlassesFrame[] = [
+// Import frame images
+import frame1Img from '@/assets/frames/frame1.png';
+import frame2Img from '@/assets/frames/frame2.png';
+import frame3Img from '@/assets/frames/frame3.png';
+
+// Real glasses frames with dimensions
+const FRAMES: GlassesFrame[] = [
   {
     id: '1',
-    name: 'Classic Rectangle',
-    imageUrl: 'https://images.unsplash.com/photo-1574258495973-f010dfbb5371?w=300&h=120&fit=crop&auto=format',
-    category: 'rectangular',
-    color: 'Black',
-    width: 140,
+    name: 'Pink Cat-Eye',
+    imageUrl: frame1Img,
+    category: 'cat-eye',
+    color: 'Pink',
+    width: 127,
+    lensWidth: 50,
+    noseBridge: 15,
+    templeLength: 135,
   },
   {
     id: '2',
-    name: 'Round Vintage',
-    imageUrl: 'https://images.unsplash.com/photo-1511499767150-a48a237f0083?w=300&h=120&fit=crop&auto=format',
+    name: 'Blue Round',
+    imageUrl: frame2Img,
     category: 'round',
-    color: 'Gold',
-    width: 130,
+    color: 'Blue',
+    width: 122,
+    lensWidth: 44,
+    noseBridge: 18,
+    templeLength: 125,
   },
   {
     id: '3',
-    name: 'Modern Aviator',
-    imageUrl: 'https://images.unsplash.com/photo-1572635196237-14b3f281503f?w=300&h=120&fit=crop&auto=format',
+    name: 'Black Aviator',
+    imageUrl: frame3Img,
     category: 'aviator',
-    color: 'Silver',
-    width: 145,
+    color: 'Black',
+    width: 141,
+    lensWidth: 55,
+    noseBridge: 18,
+    templeLength: 142,
   },
 ];
 
@@ -118,7 +132,7 @@ export function FramesTab() {
 
       {/* Frames selector */}
       <GlassesSelector
-        frames={DEMO_FRAMES}
+        frames={FRAMES}
         selectedFrame={selectedFrame}
         onSelectFrame={setSelectedFrame}
       />

@@ -47,9 +47,15 @@ export function GlassesSelector({ frames, selectedFrame, onSelectFrame, classNam
       )}
 
       {selectedFrame && (
-        <div className="mt-3 pt-3 border-t border-border">
+        <div className="mt-3 pt-3 border-t border-border space-y-2">
           <p className="text-sm font-medium text-foreground">{selectedFrame.name}</p>
           <p className="text-xs text-muted-foreground capitalize">{selectedFrame.category} • {selectedFrame.color}</p>
+          <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+            <span>Frame Width: <span className="text-foreground font-medium">{selectedFrame.width}mm</span></span>
+            <span>Lens Width: <span className="text-foreground font-medium">{selectedFrame.lensWidth}mm</span></span>
+            <span>Nose Bridge: <span className="text-foreground font-medium">{selectedFrame.noseBridge}mm</span></span>
+            <span>Temple Length: <span className="text-foreground font-medium">{selectedFrame.templeLength}mm</span></span>
+          </div>
         </div>
       )}
     </div>

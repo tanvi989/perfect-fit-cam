@@ -53,7 +53,10 @@ export interface GlassesFrame {
   imageUrl: string;
   category: 'rectangular' | 'round' | 'aviator' | 'cat-eye' | 'square';
   color: string;
-  width: number; // normalized width for scaling
+  width: number; // frame width in mm
+  lensWidth: number; // lens width in mm
+  noseBridge: number; // nose bridge in mm
+  templeLength: number; // temple length in mm
 }
 
 export type CameraState = 'requesting' | 'granted' | 'denied' | 'error';
