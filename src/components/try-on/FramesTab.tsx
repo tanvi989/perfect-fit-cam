@@ -1,9 +1,11 @@
 import { useState, useMemo } from 'react';
 import { useCaptureData } from '@/context/CaptureContext';
 import { GlassesSelector } from './GlassesSelector';
-import { Glasses, AlertCircle, CheckCircle, Info } from 'lucide-react';
+import { Glasses, AlertCircle, CheckCircle, Info, Loader2 } from 'lucide-react';
 import type { GlassesFrame } from '@/types/face-validation';
 import { cn } from '@/lib/utils';
+import { useProcessedFrames, ProcessedFrame } from '@/hooks/useProcessedFrames';
+import { Progress } from '@/components/ui/progress';
 
 // Import frame images
 import frame1Img from '@/assets/frames/frame1.png';
@@ -166,7 +168,10 @@ const FIT_CONFIG: Record<FitCategory, { label: string; color: string; message: s
 
 export function FramesTab() {
   const { capturedData } = useCaptureData();
-  const [selectedFrame, setSelectedFrame] = useState<GlassesFrame | null>(null);
+  const [selectedFrame, setSelectedFrame] = useState<ProcessedFrame | null>(null);
+  
+  // Process frames to remove backgrounds
+  const { processedFrames, isProcessing, processingProgress } = useProcessedFrames(FRAMES);
 
   const overlayResult = useMemo(() => {
     if (!selectedFrame || !capturedData?.landmarks || !capturedData?.measurements) {
@@ -256,7 +261,7 @@ export function FramesTab() {
               style={getGlassesStyle()}
             >
               <img
-                src={selectedFrame.imageUrl}
+                src={selectedFrame.processedImageUrl}
                 alt={selectedFrame.name}
                 className="w-full h-full object-contain"
                 style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' }}
@@ -280,9 +285,22 @@ export function FramesTab() {
         )}
       </div>
 
+      {/* Processing indicator */}
+      {isProcessing && (
+        <div className="bg-muted/30 rounded-xl p-4">
+          <div className="flex items-center gap-2 mb-2">
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+            <span className="text-sm text-muted-foreground">
+              Processing frames for transparent overlay...
+            </span>
+          </div>
+          <Progress value={processingProgress} className="h-2" />
+        </div>
+      )}
+
       {/* Frames selector */}
       <GlassesSelector
-        frames={FRAMES}
+        frames={processedFrames}
         selectedFrame={selectedFrame}
         onSelectFrame={setSelectedFrame}
         faceWidthMm={capturedData.measurements.face_width}
