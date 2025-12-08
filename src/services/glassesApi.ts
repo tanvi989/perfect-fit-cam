@@ -25,13 +25,34 @@ export interface LandmarkMeasurements {
   face_shape_ratio: number;
 }
 
+export interface RegionPoint {
+  x: number;
+  y: number;
+}
+
+export interface RegionPoints {
+  left_eye_center: RegionPoint;
+  right_eye_center: RegionPoint;
+  left_eyebrow: RegionPoint;
+  right_eyebrow: RegionPoint;
+  nose_tip: RegionPoint;
+  left_ear: RegionPoint;
+  right_ear: RegionPoint;
+  chin: RegionPoint;
+}
+
+export interface Scale {
+  mm_per_pixel: number;
+  pixels_per_mm: number;
+}
+
 export interface LandmarksDetectResponse {
   success: boolean;
   landmarks: {
     mm: LandmarkMeasurements;
-    pixel?: any;
-    scale?: any;
-    region_points?: any;
+    pixel?: LandmarkMeasurements;
+    scale?: Scale;
+    region_points?: RegionPoints;
   };
 }
 
