@@ -59,57 +59,74 @@ interface FrameTransform {
 }
 
 /**
+ * Calculate center point from array of [x, y] coordinates
+ */
+function calculateCenter(points: number[][]): { x: number; y: number } {
+  if (!points || points.length === 0) {
+    return { x: 0, y: 0 };
+  }
+  const sumX = points.reduce((acc, p) => acc + p[0], 0);
+  const sumY = points.reduce((acc, p) => acc + p[1], 0);
+  return {
+    x: sumX / points.length,
+    y: sumY / points.length,
+  };
+}
+
+/**
  * Compute frame transform using backend region_points and mm_per_pixel
+ * API returns arrays of [x, y] coordinates for each facial feature
  */
 function computeFrameTransform(
   frameWidthMm: number,
   faceWidthMm: number,
-  regionPoints: any, // Use any to handle varying API structures
+  regionPoints: any,
   scale: ApiScale,
   imageWidth: number,
   imageHeight: number
 ): FrameTransform | null {
-  // Log the actual structure for debugging
-  console.log('Region points from API:', JSON.stringify(regionPoints, null, 2));
-  console.log('Scale from API:', JSON.stringify(scale, null, 2));
+  // API returns left_eye and right_eye as arrays of [x, y] points
+  const leftEyePoints = regionPoints.left_eye;
+  const rightEyePoints = regionPoints.right_eye;
   
-  // Try different possible key names for eye centers
-  const leftEyeCenter = regionPoints.left_eye_center || regionPoints.leftEye || regionPoints.left_eye;
-  const rightEyeCenter = regionPoints.right_eye_center || regionPoints.rightEye || regionPoints.right_eye;
-  
-  if (!leftEyeCenter || !rightEyeCenter) {
-    console.warn('Missing eye center data in region_points:', Object.keys(regionPoints));
+  if (!leftEyePoints || !rightEyePoints || leftEyePoints.length === 0 || rightEyePoints.length === 0) {
+    console.warn('Missing eye data in region_points');
     return null;
   }
   
-  // 1. Calculate eye midpoint (center between eyes)
+  // 1. Calculate eye centers from point arrays
+  const leftEyeCenter = calculateCenter(leftEyePoints);
+  const rightEyeCenter = calculateCenter(rightEyePoints);
+  
+  // 2. Calculate eye midpoint (center between eyes)
   const eyeMidpointX = (leftEyeCenter.x + rightEyeCenter.x) / 2;
   const eyeMidpointY = (leftEyeCenter.y + rightEyeCenter.y) / 2;
   
-  // 2. Calculate eyebrow baseline for vertical alignment (with fallback)
-  const leftEyebrow = regionPoints.left_eyebrow || regionPoints.leftEyebrow;
-  const rightEyebrow = regionPoints.right_eyebrow || regionPoints.rightEyebrow;
-  const eyebrowMidpointY = (leftEyebrow && rightEyebrow) 
-    ? (leftEyebrow.y + rightEyebrow.y) / 2 
-    : eyeMidpointY - 20; // Fallback offset if no eyebrow data
+  // 3. Calculate eyebrow baseline for vertical alignment
+  const leftEyebrowPoints = regionPoints.left_eyebrow;
+  const rightEyebrowPoints = regionPoints.right_eyebrow;
+  let eyebrowMidpointY = eyeMidpointY - 30; // Default offset
   
-  // 3. Calculate rotation angle from eye line
+  if (leftEyebrowPoints && rightEyebrowPoints) {
+    const leftEyebrowCenter = calculateCenter(leftEyebrowPoints);
+    const rightEyebrowCenter = calculateCenter(rightEyebrowPoints);
+    eyebrowMidpointY = (leftEyebrowCenter.y + rightEyebrowCenter.y) / 2;
+  }
+  
+  // 4. Calculate rotation angle from eye line
   const rotationRad = Math.atan2(
     rightEyeCenter.y - leftEyeCenter.y,
     rightEyeCenter.x - leftEyeCenter.x
   );
   const rotationDeg = rotationRad * (180 / Math.PI);
   
-  // 4. Convert frame width from mm to pixels using mm_per_pixel
-  const mmPerPixel = scale.mm_per_pixel || (scale as any).mmPerPixel || 0.3; // Fallback value
+  // 5. Convert frame width from mm to pixels using mm_per_pixel
+  const mmPerPixel = scale.mm_per_pixel || 0.3;
   const frameWidthPx = frameWidthMm / mmPerPixel;
   
-  // 5. Calculate scale factor (for rendering the frame image)
-  const scaleValue = frameWidthPx / imageWidth;
-  
   // 6. Position frame - center horizontally on eye midpoint
-  // Vertically position slightly above eye line (between eyes and eyebrows)
-  const verticalOffset = (eyeMidpointY - eyebrowMidpointY) * 0.3;
+  // Vertically position between eyes and eyebrows
+  const verticalOffset = (eyeMidpointY - eyebrowMidpointY) * 0.4;
   const x = eyeMidpointX;
   const y = eyeMidpointY - verticalOffset;
   
@@ -124,10 +141,12 @@ function computeFrameTransform(
     fit = 'perfect';
   }
   
+  console.log('Frame transform calculated:', { x, y, frameWidthPx, rotationDeg, fit });
+  
   return {
     x,
     y,
-    scale: scaleValue,
+    scale: frameWidthPx / imageWidth,
     rotationDeg,
     frameWidthPx,
     fit,
