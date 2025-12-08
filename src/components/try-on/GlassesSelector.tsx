@@ -1,14 +1,13 @@
 import { cn } from '@/lib/utils';
 import type { GlassesFrame } from '@/types/face-validation';
-import { Glasses, CheckCircle, AlertCircle, Info, Loader2 } from 'lucide-react';
-import type { ProcessedFrame } from '@/hooks/useProcessedFrames';
+import { Glasses, CheckCircle, AlertCircle, Info } from 'lucide-react';
 
 type FitCategory = 'tooSmall' | 'small' | 'ideal' | 'large' | 'oversized';
 
 interface GlassesSelectorProps {
-  frames: ProcessedFrame[];
-  selectedFrame: ProcessedFrame | null;
-  onSelectFrame: (frame: ProcessedFrame) => void;
+  frames: GlassesFrame[];
+  selectedFrame: GlassesFrame | null;
+  onSelectFrame: (frame: GlassesFrame) => void;
   faceWidthMm?: number;
   className?: string;
 }
@@ -54,26 +53,18 @@ export function GlassesSelector({ frames, selectedFrame, onSelectFrame, faceWidt
               <div key={frame.id} className="flex-shrink-0 relative">
                 <button
                   onClick={() => onSelectFrame(frame)}
-                  disabled={frame.isProcessing}
                   className={cn(
                     "w-20 h-16 rounded-lg border-2 overflow-hidden transition-all duration-200 hover:scale-105",
                     selectedFrame?.id === frame.id 
                       ? "border-primary ring-2 ring-primary/30" 
-                      : "border-border hover:border-primary/50",
-                    frame.isProcessing && "opacity-50 cursor-wait"
+                      : "border-border hover:border-primary/50"
                   )}
                 >
-                  {frame.isProcessing ? (
-                    <div className="w-full h-full flex items-center justify-center bg-muted">
-                      <Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-                    </div>
-                  ) : (
-                    <img
-                      src={frame.processedImageUrl}
-                      alt={frame.name}
-                      className="w-full h-full object-contain p-1 bg-white"
-                    />
-                  )}
+                  <img
+                    src={frame.imageUrl}
+                    alt={frame.name}
+                    className="w-full h-full object-contain p-1 bg-white"
+                  />
                 </button>
                 {/* Fit indicator badge */}
                 {fitStyle && FitIcon && (
