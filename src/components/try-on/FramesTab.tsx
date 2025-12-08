@@ -58,34 +58,43 @@ export function FramesTab() {
     );
   }
 
-  const { landmarks } = capturedData;
+  const { landmarks, measurements } = capturedData;
 
-  // Calculate glasses position based on landmarks (normalized 0-1 coordinates)
+  // Calculate glasses position based on landmarks and real dimensions
   const getGlassesStyle = () => {
     if (!selectedFrame || !landmarks) return {};
 
+    // Get user's face width in mm from API measurements
+    const userFaceWidthMm = measurements.face_width;
+    const frameWidthMm = selectedFrame.width;
+
+    // Calculate the ratio: how much of the face width the frame covers
+    const frameToFaceRatio = frameWidthMm / userFaceWidthMm;
+
+    // Get face width in normalized coordinates (0-1)
+    const faceWidthNormalized = Math.abs(landmarks.faceRight.x - landmarks.faceLeft.x);
+
+    // Calculate glasses width as percentage based on real dimensions
+    const glassesWidthPercent = faceWidthNormalized * frameToFaceRatio * 100;
+
+    // Eye center for positioning
     const eyeCenterX = (landmarks.leftEye.x + landmarks.rightEye.x) / 2;
     const eyeCenterY = (landmarks.leftEye.y + landmarks.rightEye.y) / 2;
-    const eyeDistance = Math.sqrt(
-      Math.pow(landmarks.rightEye.x - landmarks.leftEye.x, 2) +
-      Math.pow(landmarks.rightEye.y - landmarks.leftEye.y, 2)
-    );
 
-    // Calculate roll angle
+    // Calculate roll angle from eye positions
     const deltaY = landmarks.rightEye.y - landmarks.leftEye.y;
     const deltaX = landmarks.rightEye.x - landmarks.leftEye.x;
     const roll = Math.atan2(deltaY, deltaX) * (180 / Math.PI);
 
-    // Scale glasses to fit face
-    const glassesWidth = eyeDistance * 2.2 * 100; // as percentage
-    const glassesHeight = glassesWidth * 0.4;
+    // Aspect ratio for height (typical glasses are ~40% as tall as wide)
+    const glassesHeightPercent = glassesWidthPercent * 0.4;
 
     return {
       position: 'absolute' as const,
       left: `${eyeCenterX * 100}%`,
       top: `${eyeCenterY * 100}%`,
-      width: `${glassesWidth}%`,
-      height: `${glassesHeight}%`,
+      width: `${glassesWidthPercent}%`,
+      height: `${glassesHeightPercent}%`,
       transform: `translate(-50%, -50%) rotate(${roll}deg)`,
       transformOrigin: 'center center',
     };
