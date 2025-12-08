@@ -286,15 +286,32 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
 
     const loadFaceMesh = async () => {
       try {
-        const faceMeshModule = await import('@mediapipe/face_mesh');
+        // Load FaceMesh from CDN script tag to avoid bundling issues
+        const loadScript = (src: string): Promise<void> => {
+          return new Promise((resolve, reject) => {
+            // Check if already loaded
+            if (document.querySelector(`script[src="${src}"]`)) {
+              resolve();
+              return;
+            }
+            const script = document.createElement('script');
+            script.src = src;
+            script.crossOrigin = 'anonymous';
+            script.onload = () => resolve();
+            script.onerror = reject;
+            document.head.appendChild(script);
+          });
+        };
+
+        await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js');
         
         if (!isMounted) return;
 
-        // Handle both default and named exports
-        const FaceMeshClass = faceMeshModule.FaceMesh || (faceMeshModule as any).default?.FaceMesh || (faceMeshModule as any).default;
+        // Access FaceMesh from window object
+        const FaceMeshClass = (window as any).FaceMesh;
         
         if (!FaceMeshClass) {
-          console.error('FaceMesh class not found in module:', Object.keys(faceMeshModule));
+          console.error('FaceMesh class not found on window');
           return;
         }
 
