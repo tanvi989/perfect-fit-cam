@@ -47,6 +47,13 @@ export interface PDMeasurement {
   faceWidthPixels: number;
 }
 
+export interface FrameOffsets {
+  offsetX: number;  // Horizontal offset in pixels (positive = right)
+  offsetY: number;  // Vertical offset in pixels (positive = down)
+  scaleAdjust: number; // Scale multiplier (1.0 = no change)
+  rotationAdjust: number; // Rotation adjustment in degrees
+}
+
 export interface GlassesFrame {
   id: string;
   name: string;
@@ -57,6 +64,7 @@ export interface GlassesFrame {
   lensWidth: number; // lens width in mm
   noseBridge: number; // nose bridge in mm
   templeLength: number; // temple length in mm
+  offsets?: FrameOffsets; // Per-frame fine-tune offsets
 }
 
 export type CameraState = 'requesting' | 'granted' | 'denied' | 'error';
