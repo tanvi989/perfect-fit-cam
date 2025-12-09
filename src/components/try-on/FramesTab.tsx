@@ -1,8 +1,8 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef } from 'react';
 import { useCaptureData } from '@/context/CaptureContext';
 import { GlassesSelector } from './GlassesSelector';
 import { Glasses, AlertCircle, CheckCircle, Info } from 'lucide-react';
-import type { GlassesFrame, ApiRegionPoints, ApiScale } from '@/types/face-validation';
+import type { GlassesFrame, ApiScale } from '@/types/face-validation';
 import { cn } from '@/lib/utils';
 
 // Import frame images
@@ -10,7 +10,7 @@ import frame1Img from '@/assets/frames/frame1.png';
 import frame2Img from '@/assets/frames/frame2.png';
 import frame3Img from '@/assets/frames/frame3.png';
 
-// Real glasses frames with dimensions
+// Real glasses frames with dimensions (mm)
 const FRAMES: GlassesFrame[] = [
   {
     id: '1',
@@ -18,9 +18,9 @@ const FRAMES: GlassesFrame[] = [
     imageUrl: frame1Img,
     category: 'cat-eye',
     color: 'Pink',
-    width: 127,
-    lensWidth: 50,
-    noseBridge: 15,
+    width: 127,        // frame_width_mm
+    lensWidth: 50,     // lens_width_mm
+    noseBridge: 15,    // bridge_mm
     templeLength: 135,
   },
   {
@@ -50,23 +50,23 @@ const FRAMES: GlassesFrame[] = [
 type FitCategory = 'tight' | 'perfect' | 'loose';
 
 interface FrameTransform {
-  x: number;           // Center X position in pixels
-  y: number;           // Center Y position in pixels
-  scale: number;       // Scale factor for the frame
-  rotationDeg: number; // Rotation in degrees
-  frameWidthPx: number; // Frame width in pixels
+  centerX: number;     // Frame center X position in pixels
+  centerY: number;     // Frame center Y position in pixels
+  scale: number;       // Scale factor for the frame image
+  rotationRad: number; // Rotation in radians
   fit: FitCategory;    // Fit classification
 }
 
 /**
- * Calculate center point from array of [x, y] coordinates
+ * Step 2: Calculate center point from array of [x, y] coordinates
+ * Used for computing eye centers from landmark arrays
  */
-function calculateCenter(points: number[][]): { x: number; y: number } {
+function getCenter(points: number[][]): { x: number; y: number } {
   if (!points || points.length === 0) {
     return { x: 0, y: 0 };
   }
-  const sumX = points.reduce((acc, p) => acc + p[0], 0);
-  const sumY = points.reduce((acc, p) => acc + p[1], 0);
+  const sumX = points.reduce((acc, p) => acc + (p[0] || 0), 0);
+  const sumY = points.reduce((acc, p) => acc + (p[1] || 0), 0);
   return {
     x: sumX / points.length,
     y: sumY / points.length,
@@ -74,64 +74,98 @@ function calculateCenter(points: number[][]): { x: number; y: number } {
 }
 
 /**
- * Compute frame transform using backend region_points and mm_per_pixel
- * API returns arrays of [x, y] coordinates for each facial feature
+ * Calculate Euclidean distance between two points
+ */
+function distance(p1: { x: number; y: number }, p2: { x: number; y: number }): number {
+  return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+}
+
+/**
+ * Main frame transform calculation following professional try-on logic:
+ * 
+ * 1. Input: region_points (left_eye, right_eye, nose_bridge), scale.mm_per_pixel, frame specs
+ * 2. Compute eye centers by averaging landmark points
+ * 3. Compute PD in pixels: distance between eye centers
+ * 4. Compute frame PD in mm: lens_width_mm * 2 + bridge_mm
+ * 5. Convert frame PD to pixels: frame_pd_mm / mm_per_pixel
+ * 6. Compute scale factor: pd_px / frame_pd_px
+ * 7. Compute rotation: atan2(leftEye.y - rightEye.y, leftEye.x - rightEye.x)
+ * 8. Position: center at eye midpoint, Y adjusted using nose_bridge
  */
 function computeFrameTransform(
-  frameWidthMm: number,
-  faceWidthMm: number,
+  frame: GlassesFrame,
   regionPoints: any,
   scale: ApiScale,
-  imageWidth: number,
-  imageHeight: number
+  faceWidthMm: number,
+  frameImageWidth: number,   // Original frame image width in pixels
+  frameImageHeight: number   // Original frame image height in pixels
 ): FrameTransform | null {
-  // API returns left_eye and right_eye as arrays of [x, y] points
+  // Step 1: Extract landmark arrays from API response
   const leftEyePoints = regionPoints.left_eye;
   const rightEyePoints = regionPoints.right_eye;
-  
-  if (!leftEyePoints || !rightEyePoints || leftEyePoints.length === 0 || rightEyePoints.length === 0) {
-    console.warn('Missing eye data in region_points');
+  const noseBridgePoints = regionPoints.nose_bridge;
+
+  if (!leftEyePoints?.length || !rightEyePoints?.length) {
+    console.warn('Missing eye landmarks in region_points');
     return null;
   }
-  
-  // 1. Calculate eye centers from point arrays
-  const leftEyeCenter = calculateCenter(leftEyePoints);
-  const rightEyeCenter = calculateCenter(rightEyePoints);
-  
-  // 2. Calculate eye midpoint (center between eyes)
-  const eyeMidpointX = (leftEyeCenter.x + rightEyeCenter.x) / 2;
-  const eyeMidpointY = (leftEyeCenter.y + rightEyeCenter.y) / 2;
-  
-  // 3. Calculate eyebrow baseline for vertical alignment
-  const leftEyebrowPoints = regionPoints.left_eyebrow;
-  const rightEyebrowPoints = regionPoints.right_eyebrow;
-  let eyebrowMidpointY = eyeMidpointY - 30; // Default offset
-  
-  if (leftEyebrowPoints && rightEyebrowPoints) {
-    const leftEyebrowCenter = calculateCenter(leftEyebrowPoints);
-    const rightEyebrowCenter = calculateCenter(rightEyebrowPoints);
-    eyebrowMidpointY = (leftEyebrowCenter.y + rightEyebrowCenter.y) / 2;
-  }
-  
-  // 4. Calculate rotation angle from eye line
-  const rotationRad = Math.atan2(
-    rightEyeCenter.y - leftEyeCenter.y,
-    rightEyeCenter.x - leftEyeCenter.x
-  );
-  const rotationDeg = rotationRad * (180 / Math.PI) + 180; // Add 180° to flip frames right-side up
 
-  // 5. Convert frame width from mm to pixels using mm_per_pixel
+  // Step 2: Compute left/right eye centers by averaging their landmark points
+  const leftEyeCenter = getCenter(leftEyePoints);
+  const rightEyeCenter = getCenter(rightEyePoints);
+
+  console.log('Eye centers:', { leftEyeCenter, rightEyeCenter });
+
+  // Step 3: Compute PD in pixels (distance between eye centers)
+  const pdPx = distance(leftEyeCenter, rightEyeCenter);
+  console.log('PD in pixels:', pdPx);
+
+  // Step 4: Compute physical PD of the frame in mm
+  // Frame PD = lens_width * 2 + bridge (distance between optical centers)
+  const framePdMm = (frame.lensWidth * 2) + frame.noseBridge;
+  console.log('Frame PD in mm:', framePdMm);
+
+  // Step 5: Convert frame PD to pixels using mm_per_pixel from API
   const mmPerPixel = scale.mm_per_pixel || 0.3;
-  const frameWidthPx = frameWidthMm / mmPerPixel;
+  const framePdPx = framePdMm / mmPerPixel;
+  console.log('Frame PD in pixels:', framePdPx, 'mm_per_pixel:', mmPerPixel);
+
+  // Step 6: Compute scale factor for the overlay image
+  // This scales the frame so its optical centers align with user's pupils
+  const scaleFactor = pdPx / framePdPx;
+  console.log('Scale factor:', scaleFactor);
+
+  // Step 7: Compute head tilt angle for rotation
+  // Note: atan2(dy, dx) - positive angle means right eye is lower
+  const rotationRad = Math.atan2(
+    leftEyeCenter.y - rightEyeCenter.y,
+    leftEyeCenter.x - rightEyeCenter.x
+  );
+  console.log('Rotation (rad):', rotationRad, 'Rotation (deg):', rotationRad * (180 / Math.PI));
+
+  // Step 8: Compute frame placement position
+  // frame_center_x = midpoint between eyes
+  const frameCenterX = (leftEyeCenter.x + rightEyeCenter.x) / 2;
+
+  // frame_center_y = nose_bridge[0].y - (frame_image_height * scale * 0.25)
+  // This places the frame slightly above nose bridge so it sits naturally on eyes
+  let frameCenterY: number;
   
-  // 6. Position frame - center horizontally on eye midpoint
-  // Vertically position between eyes and eyebrows
-  const verticalOffset = (eyeMidpointY - eyebrowMidpointY) * 0.4;
-  const x = eyeMidpointX;
-  const y = eyeMidpointY - verticalOffset;
-  
-  // 7. Fit classification based on frame width vs face width
-  const diff = frameWidthMm - faceWidthMm;
+  if (noseBridgePoints?.length > 0) {
+    // Use nose bridge top point for vertical positioning
+    const noseBridgeTop = noseBridgePoints[0];
+    const scaledFrameHeight = frameImageHeight * scaleFactor;
+    frameCenterY = noseBridgeTop[1] - (scaledFrameHeight * 0.25);
+  } else {
+    // Fallback: use eye midpoint with offset
+    const eyeMidpointY = (leftEyeCenter.y + rightEyeCenter.y) / 2;
+    frameCenterY = eyeMidpointY;
+  }
+
+  console.log('Frame center:', { x: frameCenterX, y: frameCenterY });
+
+  // Fit classification based on frame width vs face width
+  const diff = frame.width - faceWidthMm;
   let fit: FitCategory;
   if (diff <= -3) {
     fit = 'tight';
@@ -140,15 +174,12 @@ function computeFrameTransform(
   } else {
     fit = 'perfect';
   }
-  
-  console.log('Frame transform calculated:', { x, y, frameWidthPx, rotationDeg, fit });
-  
+
   return {
-    x,
-    y,
-    scale: frameWidthPx / imageWidth,
-    rotationDeg,
-    frameWidthPx,
+    centerX: frameCenterX,
+    centerY: frameCenterY,
+    scale: scaleFactor,
+    rotationRad,
     fit,
   };
 }
@@ -177,14 +208,30 @@ const FIT_CONFIG: Record<FitCategory, { label: string; color: string; message: s
 export function FramesTab() {
   const { capturedData } = useCaptureData();
   const [selectedFrame, setSelectedFrame] = useState<GlassesFrame | null>(null);
-  const [imageSize, setImageSize] = useState({ width: 0, height: 0 });
+  const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+  const [frameImageSize, setFrameImageSize] = useState({ width: 0, height: 0 });
+  const imageRef = useRef<HTMLImageElement>(null);
 
-  // Get image dimensions when loaded
+  // Get container dimensions when image loads
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     const img = e.currentTarget;
-    setImageSize({ width: img.naturalWidth, height: img.naturalHeight });
+    // Use displayed size, not natural size
+    setContainerSize({ 
+      width: img.clientWidth, 
+      height: img.clientHeight 
+    });
   };
 
+  // Get frame image dimensions when it loads
+  const handleFrameImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const img = e.currentTarget;
+    setFrameImageSize({ 
+      width: img.naturalWidth, 
+      height: img.naturalHeight 
+    });
+  };
+
+  // Compute transform using the professional calculation method
   const transform = useMemo(() => {
     if (!selectedFrame || !capturedData?.apiLandmarks) {
       return null;
@@ -192,25 +239,24 @@ export function FramesTab() {
 
     const { apiLandmarks, measurements } = capturedData;
     
-    // Check if we have required data from API
     if (!apiLandmarks.region_points || !apiLandmarks.scale) {
       console.warn('Missing region_points or scale from API');
       return null;
     }
 
-    if (imageSize.width === 0 || imageSize.height === 0) {
+    if (frameImageSize.width === 0 || frameImageSize.height === 0) {
       return null;
     }
 
     return computeFrameTransform(
-      selectedFrame.width,
-      measurements.face_width,
+      selectedFrame,
       apiLandmarks.region_points,
       apiLandmarks.scale,
-      imageSize.width,
-      imageSize.height
+      measurements.face_width,
+      frameImageSize.width,
+      frameImageSize.height
     );
-  }, [selectedFrame, capturedData, imageSize]);
+  }, [selectedFrame, capturedData, frameImageSize]);
 
   if (!capturedData) {
     return (
@@ -220,21 +266,47 @@ export function FramesTab() {
     );
   }
 
-  // Calculate glasses overlay style using pixel-based transform
-  const getGlassesStyle = () => {
-    if (!transform || imageSize.width === 0) return {};
+  /**
+   * Step 9: Generate CSS transform for the frame overlay
+   * 
+   * The transform is applied in this order:
+   * 1. translate(-50%, -50%) - Center the image on its position point
+   * 2. scale(scale) - Scale the frame based on PD ratio
+   * 3. rotate(angle) - Rotate to match head tilt
+   */
+  const getGlassesStyle = (): React.CSSProperties => {
+    if (!transform || containerSize.width === 0 || !capturedData?.processedImageDataUrl) {
+      return { display: 'none' };
+    }
 
-    // Frame height is approximately 40% of width
-    const frameHeightPx = transform.frameWidthPx * 0.4;
+    // Get the natural image dimensions to calculate scale ratios
+    const img = imageRef.current;
+    if (!img) return { display: 'none' };
+
+    const naturalWidth = img.naturalWidth;
+    const naturalHeight = img.naturalHeight;
+    
+    // Calculate scale ratios from natural to displayed size
+    const scaleX = containerSize.width / naturalWidth;
+    const scaleY = containerSize.height / naturalHeight;
+
+    // Convert API coordinates (in natural image pixels) to displayed coordinates
+    const displayX = transform.centerX * scaleX;
+    const displayY = transform.centerY * scaleY;
+
+    // The frame image needs to be rotated 180° since it's stored upside down
+    const rotationDeg = (transform.rotationRad * (180 / Math.PI)) + 180;
 
     return {
-      position: 'absolute' as const,
-      left: `${(transform.x / imageSize.width) * 100}%`,
-      top: `${(transform.y / imageSize.height) * 100}%`,
-      width: `${(transform.frameWidthPx / imageSize.width) * 100}%`,
-      height: `${(frameHeightPx / imageSize.height) * 100}%`,
-      transform: `translate(-50%, -50%) rotate(${transform.rotationDeg}deg)`,
+      position: 'absolute',
+      left: `${displayX}px`,
+      top: `${displayY}px`,
+      // Use transform with translate, scale, and rotate
+      transform: `translate(-50%, -50%) scale(${transform.scale}) rotate(${rotationDeg}deg)`,
       transformOrigin: 'center center',
+      pointerEvents: 'none',
+      // Add drop shadow for realism
+      filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))',
     };
   };
 
@@ -261,26 +333,33 @@ export function FramesTab() {
         </div>
         
         <div className="relative rounded-lg overflow-hidden bg-black aspect-[4/3]">
+          {/* User's face image */}
           <img
+            ref={imageRef}
             src={capturedData.processedImageDataUrl}
             alt="Try-on preview"
             className="w-full h-full object-contain"
             onLoad={handleImageLoad}
           />
           
-          {/* Glasses overlay */}
+          {/* Frame overlay with CSS transforms */}
           {selectedFrame && transform && (
-            <div 
-              className="pointer-events-none"
+            <img
+              src={selectedFrame.imageUrl}
+              alt={selectedFrame.name}
               style={getGlassesStyle()}
-            >
-              <img
-                src={selectedFrame.imageUrl}
-                alt={selectedFrame.name}
-                className="w-full h-full object-contain"
-                style={{ filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))' }}
-              />
-            </div>
+              onLoad={handleFrameImageLoad}
+            />
+          )}
+
+          {/* Hidden frame image to get dimensions before display */}
+          {selectedFrame && frameImageSize.width === 0 && (
+            <img
+              src={selectedFrame.imageUrl}
+              alt=""
+              className="hidden"
+              onLoad={handleFrameImageLoad}
+            />
           )}
 
           {!selectedFrame && (
@@ -295,6 +374,15 @@ export function FramesTab() {
           <div className={cn("mt-3 flex items-center gap-2 text-sm", fitInfo.color)}>
             <FitIcon className="h-4 w-4 flex-shrink-0" />
             <span>{fitInfo.message}</span>
+          </div>
+        )}
+
+        {/* Debug info (remove in production) */}
+        {transform && (
+          <div className="mt-2 text-xs text-muted-foreground font-mono">
+            Scale: {transform.scale.toFixed(3)} | 
+            Rotation: {(transform.rotationRad * 180 / Math.PI).toFixed(1)}° | 
+            Position: ({transform.centerX.toFixed(0)}, {transform.centerY.toFixed(0)})
           </div>
         )}
       </div>
