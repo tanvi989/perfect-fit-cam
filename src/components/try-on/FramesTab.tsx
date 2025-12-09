@@ -120,27 +120,29 @@ function computeFrameTransform(
   const pdPx = distance(leftEyeCenter, rightEyeCenter);
   console.log('PD in pixels:', pdPx);
 
-  // Step 4: Compute physical PD of the frame in mm
-  // Frame PD = lens_width * 2 + bridge (distance between optical centers)
-  const framePdMm = (frame.lensWidth * 2) + frame.noseBridge;
-  console.log('Frame PD in mm:', framePdMm);
-
-  // Step 5: Convert frame PD to pixels using mm_per_pixel from API
   const mmPerPixel = scale.mm_per_pixel || 0.3;
-  const framePdPx = framePdMm / mmPerPixel;
-  console.log('Frame PD in pixels:', framePdPx, 'mm_per_pixel:', mmPerPixel);
 
-  // Step 6: Compute scale factor for the overlay image
-  // This scales the frame so its optical centers align with user's pupils
-  const scaleFactor = pdPx / framePdPx;
-  console.log('Scale factor:', scaleFactor);
+  // Step 4 & 5: Calculate scale based on frame width vs face width comparison
+  // If frame is wider than face, scale down. If frame is narrower, scale up.
+  const frameWidthMm = frame.width;
+  const faceWidthPx = faceWidthMm / mmPerPixel;
+  const frameWidthPx = frameWidthMm / mmPerPixel;
+  
+  // Scale factor based on face width to frame width ratio
+  // This ensures the frame fits proportionally to the user's face
+  const scaleFactor = faceWidthPx / frameWidthPx;
+  
+  console.log('Frame width (mm):', frameWidthMm, 'Face width (mm):', faceWidthMm);
+  console.log('Scale factor (face/frame):', scaleFactor);
 
   // Step 7: Compute head tilt angle for rotation
-  // Note: atan2(dy, dx) - positive angle means right eye is lower
-  const rotationRad = Math.atan2(
+  // Add 180 degrees (π radians) because frames are upside down
+  const baseRotationRad = Math.atan2(
     leftEyeCenter.y - rightEyeCenter.y,
     leftEyeCenter.x - rightEyeCenter.x
   );
+  const rotationRad = baseRotationRad + Math.PI; // Add 180 degrees
+  
   console.log('Rotation (rad):', rotationRad, 'Rotation (deg):', rotationRad * (180 / Math.PI));
 
   // Step 8: Compute frame placement position
@@ -294,8 +296,8 @@ export function FramesTab() {
     const displayX = transform.centerX * scaleX;
     const displayY = transform.centerY * scaleY;
 
-    // The frame image needs to be rotated 180° since it's stored upside down
-    const rotationDeg = (transform.rotationRad * (180 / Math.PI)) + 180;
+    // Rotation is already adjusted with 180° in computeFrameTransform
+    const rotationDeg = transform.rotationRad * (180 / Math.PI);
 
     return {
       position: 'absolute',
