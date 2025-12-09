@@ -55,17 +55,22 @@ const FRAMES: GlassesFrame[] = [
 ];
 
 type FitCategory = 'tight' | 'perfect' | 'loose';
-type CalibrationMode = 'calibrated' | 'visual-only';
+
+// Frame PNG internal eye width in pixels (distance between lens centers in the PNG)
+// This should match the actual frame PNG - adjust per frame if needed
+const FRAME_PNG_INTERNAL_EYE_WIDTH_PX: Record<string, number> = {
+  '1': 200, // Pink Cat-Eye
+  '2': 180, // Blue Round
+  '3': 220, // Black Aviator
+};
 
 interface FrameTransform {
-  anchorX: number;       // Nose bridge X position (anchor point)
-  anchorY: number;       // Nose bridge Y position (anchor point)
-  scale: number;         // Scale factor for the frame image
-  rotationRad: number;   // Rotation in radians
+  midX: number;          // Midpoint X between eye centers
+  midY: number;          // Midpoint Y between eye centers (adjusted for nose bridge)
+  scaleFactor: number;   // Scale factor based on eye distance / frame internal width
+  angleRad: number;      // Rotation in radians from atan2
   fit: FitCategory;      // Fit classification
-  frameHeightPx: number; // Calculated frame height in pixels
-  mode: CalibrationMode; // Whether using calibrated or visual-only mode
-  eyeDistancePx: number; // For debugging
+  eyeDistancePx: number; // Distance between eye centers
 }
 
 interface AdjustmentValues {
@@ -84,120 +89,68 @@ const DEFAULT_ADJUSTMENTS: AdjustmentValues = {
 
 /**
  * Calculate center point from array of [x, y] coordinates
+ * As specified: average all points to get center
  */
 function getCenter(points: number[][]): { x: number; y: number } {
   if (!points || points.length === 0) {
     return { x: 0, y: 0 };
   }
-  const sumX = points.reduce((acc, p) => acc + (p[0] || 0), 0);
-  const sumY = points.reduce((acc, p) => acc + (p[1] || 0), 0);
-  return {
-    x: sumX / points.length,
-    y: sumY / points.length,
-  };
+  const x = points.reduce((s, p) => s + (p[0] || 0), 0) / points.length;
+  const y = points.reduce((s, p) => s + (p[1] || 0), 0) / points.length;
+  return { x, y };
 }
 
 /**
- * Calculate Euclidean distance between two points
- */
-function distance(p1: { x: number; y: number }, p2: { x: number; y: number }): number {
-  return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
-}
-
-/**
- * Clamp rotation to natural head tilt limits (±15 degrees)
- */
-function clampRotation(radians: number): number {
-  const maxTilt = 15 * (Math.PI / 180);
-  return Math.max(-maxTilt, Math.min(maxTilt, radians));
-}
-
-/**
- * Professional frame overlay calculation:
+ * Professional frame overlay calculation using exact math:
  * 
- * 1. Compute eyeCenterLeft and eyeCenterRight by averaging eye landmarks
- * 2. Compute noseBridgePoint from nose_bridge landmarks (anchor point)
- * 3. Compute head tilt: angle = atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x)
- * 4. frameWidthPx = frameWidthMM * (1 / mm_per_pixel)
- * 5. scaleFactor = frameWidthPx / frameImageNaturalWidth
- * 6. Position anchor at nose bridge point
- * 7. Apply per-frame offsets if defined
+ * 1. Calculate eye centers from landmarks
+ * 2. Calculate angle = atan2(leftCenter.y - rightCenter.y, leftCenter.x - rightCenter.x)
+ * 3. Calculate eye distance in pixels
+ * 4. Calculate scale factor = eyeDistancePx / FRAME_PNG_INTERNAL_EYE_WIDTH
+ * 5. Position at midpoint between eyes, slightly above for natural fit
  */
 function computeFrameTransform(
   frame: GlassesFrame,
   regionPoints: any,
-  scale: ApiScale,
-  faceWidthMm: number,
-  frameImageWidth: number,
-  frameImageHeight: number
+  faceWidthMm: number
 ): FrameTransform | null {
-  // Extract landmark arrays
+  // Extract landmark arrays for eyes
   const leftEyePoints = regionPoints.left_eye;
   const rightEyePoints = regionPoints.right_eye;
-  const noseBridgePoints = regionPoints.nose_bridge;
 
   if (!leftEyePoints?.length || !rightEyePoints?.length) {
     console.warn('Missing eye landmarks');
     return null;
   }
 
-  // Compute eye centers by averaging landmark points
-  const leftEyeCenter = getCenter(leftEyePoints);
-  const rightEyeCenter = getCenter(rightEyePoints);
+  // Step 1: Calculate eye centers by averaging landmark points
+  const leftCenter = getCenter(leftEyePoints);
+  const rightCenter = getCenter(rightEyePoints);
 
-  // Compute eye distance (PD) in pixels
-  const eyeDistancePx = distance(leftEyeCenter, rightEyeCenter);
-
-  // Compute nose bridge point (anchor for glasses)
-  let noseBridgePoint: { x: number; y: number };
-  if (noseBridgePoints?.length) {
-    noseBridgePoint = getCenter(noseBridgePoints);
-  } else {
-    // Fallback: use midpoint between eyes, slightly below
-    noseBridgePoint = {
-      x: (leftEyeCenter.x + rightEyeCenter.x) / 2,
-      y: (leftEyeCenter.y + rightEyeCenter.y) / 2 + eyeDistancePx * 0.1,
-    };
-  }
-
-  // Check mm_per_pixel reliability
-  const mmPerPixel = scale.mm_per_pixel;
-  const isCalibrated = mmPerPixel && mmPerPixel > 0.1 && mmPerPixel < 1.0;
-
-  let frameWidthPx: number;
-  let mode: CalibrationMode;
-
-  if (isCalibrated) {
-    // Calibrated: frameWidthPx = frameWidthMM * (1 / mm_per_pixel)
-    const pixelsPerMM = 1 / mmPerPixel;
-    frameWidthPx = frame.width * pixelsPerMM;
-    mode = 'calibrated';
-  } else {
-    // Fallback: scale to ~2.8-3.2× eyeDistancePx
-    frameWidthPx = eyeDistancePx * 3.0;
-    mode = 'visual-only';
-  }
-
-  // Validate: clamp if excessively large/small
-  const minFrameWidth = eyeDistancePx * 2.4;
-  const maxFrameWidth = eyeDistancePx * 3.2;
-  if (frameWidthPx < minFrameWidth) frameWidthPx = minFrameWidth;
-  if (frameWidthPx > maxFrameWidth) frameWidthPx = maxFrameWidth;
-
-  // Calculate scale factor
-  const scaleFactor = frameWidthPx / frameImageWidth;
-
-  // Calculate frame height
-  const frameHeightPx = (frameImageHeight / frameImageWidth) * frameWidthPx;
-
-  // Compute head tilt angle
-  const rawRotation = Math.atan2(
-    rightEyeCenter.y - leftEyeCenter.y,
-    rightEyeCenter.x - leftEyeCenter.x
+  // Step 2: Calculate angle using atan2
+  const angleRad = Math.atan2(
+    leftCenter.y - rightCenter.y,
+    leftCenter.x - rightCenter.x
   );
-  const rotationRad = clampRotation(rawRotation);
 
-  // Fit classification
+  // Step 3: Calculate eye distance in pixels
+  const eyeDistancePx = Math.sqrt(
+    Math.pow(leftCenter.x - rightCenter.x, 2) +
+    Math.pow(leftCenter.y - rightCenter.y, 2)
+  );
+
+  // Step 4: Calculate scale factor
+  const frameInternalWidth = FRAME_PNG_INTERNAL_EYE_WIDTH_PX[frame.id] || 200;
+  const scaleFactor = eyeDistancePx / frameInternalWidth;
+
+  // Step 5: Position - midpoint between eyes
+  const midX = (leftCenter.x + rightCenter.x) / 2;
+  const midY = (leftCenter.y + rightCenter.y) / 2;
+
+  // Adjust Y slightly above eye center for natural nose bridge placement
+  const frameY = midY - (0.10 * eyeDistancePx);
+
+  // Fit classification based on frame width vs face width
   const diff = frame.width - faceWidthMm;
   let fit: FitCategory;
   if (diff <= -3) fit = 'tight';
@@ -205,13 +158,11 @@ function computeFrameTransform(
   else fit = 'perfect';
 
   return {
-    anchorX: noseBridgePoint.x,
-    anchorY: noseBridgePoint.y,
-    scale: scaleFactor,
-    rotationRad,
+    midX,
+    midY: frameY,
+    scaleFactor,
+    angleRad,
     fit,
-    frameHeightPx,
-    mode,
     eyeDistancePx,
   };
 }
@@ -241,7 +192,6 @@ export function FramesTab() {
   const { capturedData } = useCaptureData();
   const [selectedFrame, setSelectedFrame] = useState<GlassesFrame | null>(null);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
-  const [frameImageSize, setFrameImageSize] = useState({ width: 0, height: 0 });
   const [adjustments, setAdjustments] = useState<AdjustmentValues>(DEFAULT_ADJUSTMENTS);
   const [showDebugOverlay, setShowDebugOverlay] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
@@ -249,11 +199,6 @@ export function FramesTab() {
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     const img = e.currentTarget;
     setContainerSize({ width: img.clientWidth, height: img.clientHeight });
-  };
-
-  const handleFrameImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
-    const img = e.currentTarget;
-    setFrameImageSize({ width: img.naturalWidth, height: img.naturalHeight });
   };
 
   const handleFrameSelect = (frame: GlassesFrame | null) => {
@@ -270,23 +215,19 @@ export function FramesTab() {
     setAdjustments(selectedFrame?.offsets || DEFAULT_ADJUSTMENTS);
   };
 
-  // Compute transform using nose-bridge anchoring
+  // Compute transform using eye-center based math
   const transform = useMemo(() => {
     if (!selectedFrame || !capturedData?.apiLandmarks) return null;
 
     const { apiLandmarks, measurements } = capturedData;
-    if (!apiLandmarks.region_points || !apiLandmarks.scale) return null;
-    if (frameImageSize.width === 0 || frameImageSize.height === 0) return null;
+    if (!apiLandmarks.region_points) return null;
 
     return computeFrameTransform(
       selectedFrame,
       apiLandmarks.region_points,
-      apiLandmarks.scale,
-      measurements.face_width,
-      frameImageSize.width,
-      frameImageSize.height
+      measurements.face_width
     );
-  }, [selectedFrame, capturedData, frameImageSize]);
+  }, [selectedFrame, capturedData]);
 
   if (!capturedData) {
     return (
@@ -305,6 +246,13 @@ export function FramesTab() {
    * 4. Apply scale factor
    * 5. Apply user adjustments
    */
+  /**
+   * Apply CSS transform for frame overlay:
+   * 
+   * frameElement.style.left = `${midX}px`;
+   * frameElement.style.top = `${frameY}px`;
+   * frameElement.style.transform = `translate(-50%, -50%) rotate(${angleRad}rad) scale(${scaleFactor})`;
+   */
   const getGlassesStyle = (): React.CSSProperties => {
     if (!transform || containerSize.width === 0 || !capturedData?.processedImageDataUrl) {
       return { display: 'none' };
@@ -321,20 +269,22 @@ export function FramesTab() {
     const scaleY = containerSize.height / naturalHeight;
     const displayScaleRatio = Math.min(scaleX, scaleY);
 
-    // Convert anchor point to display coordinates
-    const displayAnchorX = transform.anchorX * scaleX + adjustments.offsetX;
-    const displayAnchorY = transform.anchorY * scaleY + adjustments.offsetY;
+    // Convert midpoint to display coordinates with adjustments
+    const displayX = transform.midX * scaleX + adjustments.offsetX;
+    const displayY = transform.midY * scaleY + adjustments.offsetY;
 
-    // Apply adjustments to scale and rotation
-    const displayScale = transform.scale * displayScaleRatio * adjustments.scaleAdjust;
-    const rotationDeg = (transform.rotationRad * (180 / Math.PI)) + 180 + adjustments.rotationAdjust;
+    // Apply scale factor with display ratio and user adjustment
+    const finalScale = transform.scaleFactor * displayScaleRatio * adjustments.scaleAdjust;
+    
+    // Apply rotation with 180° offset (frame is upside down in PNG) and user adjustment
+    const finalRotation = transform.angleRad + Math.PI + (adjustments.rotationAdjust * Math.PI / 180);
 
     return {
       position: 'absolute',
-      left: `${displayAnchorX}px`,
-      top: `${displayAnchorY}px`,
-      // Order: translate to center, then scale, then rotate
-      transform: `translate(-50%, -50%) scale(${displayScale}) rotate(${rotationDeg}deg)`,
+      left: `${displayX}px`,
+      top: `${displayY}px`,
+      // Exact transform order: translate(-50%, -50%) rotate() scale()
+      transform: `translate(-50%, -50%) rotate(${finalRotation}rad) scale(${finalScale})`,
       transformOrigin: 'center center',
       pointerEvents: 'none',
       filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))',
@@ -368,21 +318,11 @@ export function FramesTab() {
               </Label>
             </div>
 
-            {/* Fit badges */}
-            {transform && (
-              <div className="flex items-center gap-2">
-                {transform.mode === 'visual-only' && (
-                  <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-amber-100 text-amber-700 text-xs">
-                    <AlertCircle className="h-3 w-3" />
-                    <span>Visual Only</span>
-                  </div>
-                )}
-                {fitInfo && (
-                  <div className={cn("flex items-center gap-1.5 px-3 py-1 rounded-full bg-background border", fitInfo.color)}>
-                    <FitIcon className="h-4 w-4" />
-                    <span className="text-xs font-medium">{fitInfo.label}</span>
-                  </div>
-                )}
+            {/* Fit badge */}
+            {transform && fitInfo && (
+              <div className={cn("flex items-center gap-1.5 px-3 py-1 rounded-full bg-background border", fitInfo.color)}>
+                <FitIcon className="h-4 w-4" />
+                <span className="text-xs font-medium">{fitInfo.label}</span>
               </div>
             )}
           </div>
@@ -415,17 +355,6 @@ export function FramesTab() {
               src={selectedFrame.imageUrl}
               alt={selectedFrame.name}
               style={getGlassesStyle()}
-              onLoad={handleFrameImageLoad}
-            />
-          )}
-
-          {/* Hidden frame image to get dimensions before display */}
-          {selectedFrame && frameImageSize.width === 0 && (
-            <img
-              src={selectedFrame.imageUrl}
-              alt=""
-              className="hidden"
-              onLoad={handleFrameImageLoad}
             />
           )}
 
@@ -447,10 +376,10 @@ export function FramesTab() {
         {/* Debug info */}
         {transform && (
           <div className="mt-2 text-xs text-muted-foreground font-mono">
-            Scale: {(transform.scale * adjustments.scaleAdjust).toFixed(3)} |
-            Rotation: {((transform.rotationRad * 180 / Math.PI) + adjustments.rotationAdjust).toFixed(1)}° |
-            Anchor: ({transform.anchorX.toFixed(0)}, {transform.anchorY.toFixed(0)}) |
-            PD: {transform.eyeDistancePx.toFixed(0)}px
+            Scale: {(transform.scaleFactor * adjustments.scaleAdjust).toFixed(3)} |
+            Angle: {(transform.angleRad * 180 / Math.PI).toFixed(1)}° |
+            Eye Distance: {transform.eyeDistancePx.toFixed(0)}px |
+            Position: ({transform.midX.toFixed(0)}, {transform.midY.toFixed(0)})
           </div>
         )}
       </div>
