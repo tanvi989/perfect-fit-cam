@@ -48,14 +48,16 @@ const FRAMES: GlassesFrame[] = [
 ];
 
 type FitCategory = 'tight' | 'perfect' | 'loose';
+type CalibrationMode = 'calibrated' | 'visual-only';
 
 interface FrameTransform {
-  centerX: number;     // Frame center X position in pixels
-  centerY: number;     // Frame center Y position in pixels
-  scale: number;       // Scale factor for the frame image
-  rotationRad: number; // Rotation in radians
-  fit: FitCategory;    // Fit classification
+  centerX: number;       // Frame center X position in pixels
+  centerY: number;       // Frame center Y position in pixels
+  scale: number;         // Scale factor for the frame image
+  rotationRad: number;   // Rotation in radians
+  fit: FitCategory;      // Fit classification
   frameHeightPx: number; // Calculated frame height in pixels
+  mode: CalibrationMode; // Whether using calibrated or visual-only mode
 }
 
 /**
@@ -81,16 +83,32 @@ function distance(p1: { x: number; y: number }, p2: { x: number; y: number }): n
 }
 
 /**
- * Professional frame overlay calculation following strict specifications:
+ * Clamp rotation to natural head tilt limits (±15 degrees)
+ */
+function clampRotation(radians: number): number {
+  const maxTilt = 15 * (Math.PI / 180); // 15 degrees in radians
+  return Math.max(-maxTilt, Math.min(maxTilt, radians));
+}
+
+/**
+ * Professional frame overlay calculation:
  * 
- * 1. Compute eyeCenterLeft from landmarks (averaged from left_eye array)
- * 2. Compute eyeCenterRight from landmarks (averaged from right_eye array)
- * 3. Compute eyeDistancePx between eye centers
- * 4. Convert physical frame width MM → frameWidthPx using backend mm_per_pixel
- * 5. scaleFactor = frameWidthPx / naturalPNGwidth
- * 6. Position at center between eyes, Y offset lifts frame 12-16px above eyes
- * 7. Rotation = atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x)
- * 8. Apply mandatory correction rules for size, position, and width clamping
+ * Input:
+ * - Face landmarks: left_eye, right_eye, nose_bridge
+ * - mm_per_pixel calibration from PD measurement
+ * - Real frame specs (frame_width_mm, bridge_mm, lens_width_mm)
+ * - Frame PNG natural dimensions
+ * 
+ * Compute:
+ * - eyeDistancePx = distance between eye centers
+ * - frameWidthPx = frame_width_mm / mm_per_pixel
+ * - scale = frameWidthPx / frameImageNaturalWidth
+ * - rotation = atan2(deltaY, deltaX) between eyes (clamped)
+ * - centerX/Y = midpoint between eye centers
+ * - verticalOffset based on nose_bridge landmark
+ * 
+ * Fallback:
+ * - If mm_per_pixel unreliable: scale frame to ~3× eyeDistancePx
  */
 function computeFrameTransform(
   frame: GlassesFrame,
@@ -100,9 +118,10 @@ function computeFrameTransform(
   frameImageWidth: number,
   frameImageHeight: number
 ): FrameTransform | null {
-  // Step 1: Extract landmark arrays from API response
+  // Step 1: Extract landmark arrays
   const leftEyePoints = regionPoints.left_eye;
   const rightEyePoints = regionPoints.right_eye;
+  const noseBridgePoints = regionPoints.nose_bridge;
 
   if (!leftEyePoints?.length || !rightEyePoints?.length) {
     console.warn('Missing eye landmarks in region_points');
@@ -116,45 +135,64 @@ function computeFrameTransform(
   // Step 3: Compute eye distance (PD) in pixels
   const eyeDistancePx = distance(leftEyeCenter, rightEyeCenter);
 
-  // Step 4: Convert physical frame width MM → frameWidthPx using mm_per_pixel
-  const mmPerPixel = scale.mm_per_pixel || 0.3;
-  const pixelsPerMM = 1 / mmPerPixel;
+  // Step 4: Check mm_per_pixel reliability
+  const mmPerPixel = scale.mm_per_pixel;
+  const isCalibrated = mmPerPixel && mmPerPixel > 0.1 && mmPerPixel < 1.0;
   
-  // Use lens width for scale calculation (Rule 7: temples do NOT determine scale)
-  // Frame optical width = lens_width * 2 + bridge
-  const frameOpticalWidthMm = frame.lensWidth * 2 + frame.noseBridge;
-  let frameWidthPx = frameOpticalWidthMm * pixelsPerMM;
+  let frameWidthPx: number;
+  let mode: CalibrationMode;
+
+  if (isCalibrated) {
+    // Calibrated mode: Use mm_per_pixel
+    const pixelsPerMM = 1 / mmPerPixel;
+    frameWidthPx = frame.width * pixelsPerMM;
+    mode = 'calibrated';
+  } else {
+    // Fallback: Visual-only mode - scale to ~3× eyeDistancePx
+    frameWidthPx = eyeDistancePx * 3.0;
+    mode = 'visual-only';
+    console.warn('Using visual-only mode: mm_per_pixel unreliable');
+  }
+
+  // Validate fit: clamp if excessively large/small relative to eyeDistancePx
+  const minFrameWidth = eyeDistancePx * 2.4;
+  const maxFrameWidth = eyeDistancePx * 3.2;
   
-  // Mandatory correction: Clamp frameWidthPx (Rule 5c)
-  const maxFrameWidth = eyeDistancePx * 2.85;
-  if (frameWidthPx > maxFrameWidth) {
+  if (frameWidthPx < minFrameWidth) {
+    frameWidthPx = minFrameWidth;
+  } else if (frameWidthPx > maxFrameWidth) {
     frameWidthPx = maxFrameWidth;
   }
 
-  // Step 5: Calculate scale factor
-  let scaleFactor = frameWidthPx / frameImageWidth;
-  
-  // Mandatory correction: Reduce scale if too large (Rule 5a)
-  // Apply a slight reduction for better fit
-  scaleFactor = scaleFactor * 0.93; // Reduce by ~7%
+  // Step 5: Calculate scale factor = frameWidthPx / naturalPNGwidth
+  const scaleFactor = frameWidthPx / frameImageWidth;
 
   // Step 6: Calculate frame height based on aspect ratio
-  const frameHeightPx = (frameImageHeight / frameImageWidth) * frameWidthPx * 0.93;
+  const frameHeightPx = (frameImageHeight / frameImageWidth) * frameWidthPx;
 
-  // Step 7: Position - center between both eyes
+  // Step 7: Position at midpoint between eye centers
   const eyeCenterX = (leftEyeCenter.x + rightEyeCenter.x) / 2;
   const eyeCenterY = (leftEyeCenter.y + rightEyeCenter.y) / 2;
   
-  // Mandatory correction: Lift frame so top sits 12-16px above eyes (Rule 3, 5b)
-  // Raise Y by 0.04 * frameHeightPx + base offset
-  const verticalOffset = Math.max(14, frameHeightPx * 0.04);
+  // Vertical offset: use nose_bridge if available, otherwise use frame height ratio
+  let verticalOffset = frameHeightPx * 0.15; // Default: lift by 15% of frame height
+  
+  if (noseBridgePoints?.length) {
+    const noseBridgeCenter = getCenter(noseBridgePoints);
+    // Position frame so bridge aligns with nose bridge landmark
+    // The nose bridge Y is typically slightly below eye center
+    const noseBridgeOffset = eyeCenterY - noseBridgeCenter.y;
+    verticalOffset = Math.max(0, noseBridgeOffset + frameHeightPx * 0.1);
+  }
+  
   const adjustedCenterY = eyeCenterY - verticalOffset;
 
-  // Step 8: Compute rotation angle (Rule 3, 6)
-  const rotationRad = Math.atan2(
+  // Step 8: Compute rotation angle and clamp to natural limits
+  const rawRotation = Math.atan2(
     rightEyeCenter.y - leftEyeCenter.y,
     rightEyeCenter.x - leftEyeCenter.x
   );
+  const rotationRad = clampRotation(rawRotation);
 
   // Fit classification based on frame width vs face width
   const diff = frame.width - faceWidthMm;
@@ -167,12 +205,12 @@ function computeFrameTransform(
     fit = 'perfect';
   }
 
-  console.log('Frame overlay calc:', {
+  console.log('Frame overlay:', {
+    mode,
     eyeDistancePx: eyeDistancePx.toFixed(1),
-    frameOpticalWidthMm,
     frameWidthPx: frameWidthPx.toFixed(1),
     scaleFactor: scaleFactor.toFixed(3),
-    position: { x: eyeCenterX.toFixed(1), y: adjustedCenterY.toFixed(1) },
+    verticalOffset: verticalOffset.toFixed(1),
     rotationDeg: (rotationRad * 180 / Math.PI).toFixed(2)
   });
 
@@ -183,6 +221,7 @@ function computeFrameTransform(
     rotationRad,
     fit,
     frameHeightPx,
+    mode,
   };
 }
 
@@ -284,6 +323,12 @@ export function FramesTab() {
    * 
    * Transform origin is center between both eyes.
    */
+  /**
+   * Generate CSS transform for frame overlay:
+   * 
+   * Transform origin at center (bridge point of PNG).
+   * Apply: translate(-50%, -50%), then scale, then rotate.
+   */
   const getGlassesStyle = (): React.CSSProperties => {
     if (!transform || containerSize.width === 0 || !capturedData?.processedImageDataUrl) {
       return { display: 'none' };
@@ -303,18 +348,19 @@ export function FramesTab() {
     const displayX = transform.centerX * scaleX;
     const displayY = transform.centerY * scaleY;
     
-    // Scale factor adjusted for display scaling
-    const displayScale = transform.scale * Math.min(scaleX, scaleY);
+    // Scale factor adjusted for display scaling (use uniform scale)
+    const displayScaleRatio = Math.min(scaleX, scaleY);
+    const displayScale = transform.scale * displayScaleRatio;
 
-    // Rotation in degrees + 180° to face user (frame PNGs face outward)
+    // Rotation: +180° to flip frame to face user (PNG faces outward by default)
     const rotationDeg = (transform.rotationRad * (180 / Math.PI)) + 180;
 
     return {
       position: 'absolute',
       left: `${displayX}px`,
       top: `${displayY}px`,
-      // Rule 4: translate(-50%, -50%) rotate(rotationDeg) scale(scaleFactor)
-      transform: `translate(-50%, -50%) rotate(${rotationDeg}deg) scale(${displayScale})`,
+      // Apply: translate(-50%, -50%) to center on bridge, then scale, then rotate
+      transform: `translate(-50%, -50%) scale(${displayScale}) rotate(${rotationDeg}deg)`,
       transformOrigin: 'center center',
       pointerEvents: 'none',
       filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))',
@@ -335,10 +381,20 @@ export function FramesTab() {
           </div>
           
           {/* Fit indicator badge */}
-          {fitInfo && transform && (
-            <div className={cn("flex items-center gap-1.5 px-3 py-1 rounded-full bg-background border", fitInfo.color)}>
-              <FitIcon className="h-4 w-4" />
-              <span className="text-xs font-medium">{fitInfo.label}</span>
+          {transform && (
+            <div className="flex items-center gap-2">
+              {transform.mode === 'visual-only' && (
+                <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-amber-100 text-amber-700 text-xs">
+                  <AlertCircle className="h-3 w-3" />
+                  <span>Visual Only</span>
+                </div>
+              )}
+              {fitInfo && (
+                <div className={cn("flex items-center gap-1.5 px-3 py-1 rounded-full bg-background border", fitInfo.color)}>
+                  <FitIcon className="h-4 w-4" />
+                  <span className="text-xs font-medium">{fitInfo.label}</span>
+                </div>
+              )}
             </div>
           )}
         </div>
