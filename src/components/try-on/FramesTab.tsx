@@ -282,8 +282,8 @@ export function FramesTab() {
     const displayX = transform.centerX * scaleX;
     const displayY = transform.centerY * scaleY;
 
-    // Rotation in degrees (no extra 180° needed - reference approach)
-    const rotationDeg = transform.rotationRad * (180 / Math.PI);
+    // Add 180° rotation to flip the frame to face the user
+    const rotationDeg = (transform.rotationRad * (180 / Math.PI)) + 180;
 
     return {
       position: 'absolute',
