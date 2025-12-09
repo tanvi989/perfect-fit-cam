@@ -59,8 +59,7 @@ interface FrameTransform {
 }
 
 /**
- * Step 2: Calculate center point from array of [x, y] coordinates
- * Used for computing eye centers from landmark arrays
+ * Calculate center point from array of [x, y] coordinates
  */
 function getCenter(points: number[][]): { x: number; y: number } {
   if (!points || points.length === 0) {
@@ -82,24 +81,24 @@ function distance(p1: { x: number; y: number }, p2: { x: number; y: number }): n
 }
 
 /**
- * Main frame transform calculation following professional try-on logic:
+ * Professional frame overlay calculation following strict specifications:
  * 
- * 1. Input: region_points (left_eye, right_eye, nose_bridge), scale.mm_per_pixel, frame specs
- * 2. Compute eye centers by averaging landmark points
- * 3. Compute PD in pixels: distance between eye centers
- * 4. Compute frame PD in mm: lens_width_mm * 2 + bridge_mm
- * 5. Convert frame PD to pixels: frame_pd_mm / mm_per_pixel
- * 6. Compute scale factor: pd_px / frame_pd_px
- * 7. Compute rotation: atan2(leftEye.y - rightEye.y, leftEye.x - rightEye.x)
- * 8. Position: center at eye midpoint, Y adjusted using nose_bridge
+ * 1. Compute eyeCenterLeft from landmarks (averaged from left_eye array)
+ * 2. Compute eyeCenterRight from landmarks (averaged from right_eye array)
+ * 3. Compute eyeDistancePx between eye centers
+ * 4. Convert physical frame width MM → frameWidthPx using backend mm_per_pixel
+ * 5. scaleFactor = frameWidthPx / naturalPNGwidth
+ * 6. Position at center between eyes, Y offset lifts frame 12-16px above eyes
+ * 7. Rotation = atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x)
+ * 8. Apply mandatory correction rules for size, position, and width clamping
  */
 function computeFrameTransform(
   frame: GlassesFrame,
   regionPoints: any,
   scale: ApiScale,
   faceWidthMm: number,
-  frameImageWidth: number,   // Original frame image width in pixels
-  frameImageHeight: number   // Original frame image height in pixels
+  frameImageWidth: number,
+  frameImageHeight: number
 ): FrameTransform | null {
   // Step 1: Extract landmark arrays from API response
   const leftEyePoints = regionPoints.left_eye;
@@ -110,46 +109,52 @@ function computeFrameTransform(
     return null;
   }
 
-  // Step 2: Compute left/right eye centers by averaging their landmark points
+  // Step 2: Compute eye centers by averaging landmark points
   const leftEyeCenter = getCenter(leftEyePoints);
   const rightEyeCenter = getCenter(rightEyePoints);
 
-  console.log('Eye centers:', { leftEyeCenter, rightEyeCenter });
-
   // Step 3: Compute eye distance (PD) in pixels
-  const eyeDistancePx = Math.abs(rightEyeCenter.x - leftEyeCenter.x);
-  console.log('Eye distance (px):', eyeDistancePx);
+  const eyeDistancePx = distance(leftEyeCenter, rightEyeCenter);
 
+  // Step 4: Convert physical frame width MM → frameWidthPx using mm_per_pixel
   const mmPerPixel = scale.mm_per_pixel || 0.3;
   const pixelsPerMM = 1 / mmPerPixel;
+  
+  // Use lens width for scale calculation (Rule 7: temples do NOT determine scale)
+  // Frame optical width = lens_width * 2 + bridge
+  const frameOpticalWidthMm = frame.lensWidth * 2 + frame.noseBridge;
+  let frameWidthPx = frameOpticalWidthMm * pixelsPerMM;
+  
+  // Mandatory correction: Clamp frameWidthPx (Rule 5c)
+  const maxFrameWidth = eyeDistancePx * 2.85;
+  if (frameWidthPx > maxFrameWidth) {
+    frameWidthPx = maxFrameWidth;
+  }
 
-  // Step 4: Calculate frame size using physical dimensions
-  // targetFrameWidthPx = frameWidthMM * pixelsPerMM
-  const frameWidthMm = frame.width;
-  const targetFrameWidthPx = frameWidthMm * pixelsPerMM;
+  // Step 5: Calculate scale factor
+  let scaleFactor = frameWidthPx / frameImageWidth;
   
-  // Step 5: Calculate scale factor to resize frame image to target size
-  // Scale = targetFrameWidthPx / originalFrameImageWidth
-  const scaleFactor = targetFrameWidthPx / frameImageWidth;
-  
-  console.log('Frame width (mm):', frameWidthMm, 'Target width (px):', targetFrameWidthPx);
-  console.log('Frame image width:', frameImageWidth, 'Scale factor:', scaleFactor);
+  // Mandatory correction: Reduce scale if too large (Rule 5a)
+  // Apply a slight reduction for better fit
+  scaleFactor = scaleFactor * 0.93; // Reduce by ~7%
 
   // Step 6: Calculate frame height based on aspect ratio
-  const frameHeightPx = (frameImageHeight / frameImageWidth) * targetFrameWidthPx;
+  const frameHeightPx = (frameImageHeight / frameImageWidth) * frameWidthPx * 0.93;
 
-  // Step 7: Position at eye center (like reference function)
+  // Step 7: Position - center between both eyes
   const eyeCenterX = (leftEyeCenter.x + rightEyeCenter.x) / 2;
   const eyeCenterY = (leftEyeCenter.y + rightEyeCenter.y) / 2;
+  
+  // Mandatory correction: Lift frame so top sits 12-16px above eyes (Rule 3, 5b)
+  // Raise Y by 0.04 * frameHeightPx + base offset
+  const verticalOffset = Math.max(14, frameHeightPx * 0.04);
+  const adjustedCenterY = eyeCenterY - verticalOffset;
 
-  // Step 8: Compute head tilt angle for rotation (no 180° addition - reference doesn't use it)
+  // Step 8: Compute rotation angle (Rule 3, 6)
   const rotationRad = Math.atan2(
     rightEyeCenter.y - leftEyeCenter.y,
     rightEyeCenter.x - leftEyeCenter.x
   );
-  
-  console.log('Rotation (rad):', rotationRad, 'Rotation (deg):', rotationRad * (180 / Math.PI));
-  console.log('Frame center:', { x: eyeCenterX, y: eyeCenterY });
 
   // Fit classification based on frame width vs face width
   const diff = frame.width - faceWidthMm;
@@ -162,13 +167,22 @@ function computeFrameTransform(
     fit = 'perfect';
   }
 
+  console.log('Frame overlay calc:', {
+    eyeDistancePx: eyeDistancePx.toFixed(1),
+    frameOpticalWidthMm,
+    frameWidthPx: frameWidthPx.toFixed(1),
+    scaleFactor: scaleFactor.toFixed(3),
+    position: { x: eyeCenterX.toFixed(1), y: adjustedCenterY.toFixed(1) },
+    rotationDeg: (rotationRad * 180 / Math.PI).toFixed(2)
+  });
+
   return {
     centerX: eyeCenterX,
-    centerY: eyeCenterY,
+    centerY: adjustedCenterY,
     scale: scaleFactor,
     rotationRad,
     fit,
-    frameHeightPx,  // Pass this for vertical offset calculation
+    frameHeightPx,
   };
 }
 
@@ -262,12 +276,19 @@ export function FramesTab() {
    * 2. scale(scale) - Scale the frame based on PD ratio
    * 3. rotate(angle) - Rotate to match head tilt
    */
+  /**
+   * Generate CSS transform for frame overlay (Rule 4):
+   * 
+   * position: absolute;
+   * transform: translate(-50%, -50%) rotate(rotationDeg) scale(scaleFactor);
+   * 
+   * Transform origin is center between both eyes.
+   */
   const getGlassesStyle = (): React.CSSProperties => {
     if (!transform || containerSize.width === 0 || !capturedData?.processedImageDataUrl) {
       return { display: 'none' };
     }
 
-    // Get the natural image dimensions to calculate scale ratios
     const img = imageRef.current;
     if (!img) return { display: 'none' };
 
@@ -278,22 +299,24 @@ export function FramesTab() {
     const scaleX = containerSize.width / naturalWidth;
     const scaleY = containerSize.height / naturalHeight;
 
-    // Convert API coordinates (in natural image pixels) to displayed coordinates
+    // Convert API coordinates to displayed coordinates
     const displayX = transform.centerX * scaleX;
     const displayY = transform.centerY * scaleY;
+    
+    // Scale factor adjusted for display scaling
+    const displayScale = transform.scale * Math.min(scaleX, scaleY);
 
-    // Add 180° rotation to flip the frame to face the user
+    // Rotation in degrees + 180° to face user (frame PNGs face outward)
     const rotationDeg = (transform.rotationRad * (180 / Math.PI)) + 180;
 
     return {
       position: 'absolute',
       left: `${displayX}px`,
       top: `${displayY}px`,
-      // Use transform with translate, scale, and rotate
-      transform: `translate(-50%, -50%) scale(${transform.scale}) rotate(${rotationDeg}deg)`,
+      // Rule 4: translate(-50%, -50%) rotate(rotationDeg) scale(scaleFactor)
+      transform: `translate(-50%, -50%) rotate(${rotationDeg}deg) scale(${displayScale})`,
       transformOrigin: 'center center',
       pointerEvents: 'none',
-      // Add drop shadow for realism
       filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.3))',
     };
   };
