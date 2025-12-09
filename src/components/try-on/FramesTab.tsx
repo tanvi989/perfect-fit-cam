@@ -118,8 +118,8 @@ function computeFrameTransform(
     rightEyeCenter.y - leftEyeCenter.y,
     rightEyeCenter.x - leftEyeCenter.x
   );
-  const rotationDeg = rotationRad * (180 / Math.PI);
-  
+  const rotationDeg = rotationRad * (180 / Math.PI) + 180; // Add 180° to flip frames right-side up
+
   // 5. Convert frame width from mm to pixels using mm_per_pixel
   const mmPerPixel = scale.mm_per_pixel || 0.3;
   const frameWidthPx = frameWidthMm / mmPerPixel;
