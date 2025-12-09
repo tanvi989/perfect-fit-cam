@@ -296,8 +296,8 @@ export function FramesTab() {
     const displayX = transform.centerX * scaleX;
     const displayY = transform.centerY * scaleY;
 
-    // Rotation is already adjusted with 180° in computeFrameTransform
-    const rotationDeg = transform.rotationRad * (180 / Math.PI);
+    // Add additional 180° rotation to flip the frame right-side up
+    const rotationDeg = (transform.rotationRad * (180 / Math.PI)) + 180;
 
     return {
       position: 'absolute',
