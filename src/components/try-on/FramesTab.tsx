@@ -1,8 +1,12 @@
 import { useState, useMemo, useRef } from 'react';
 import { useCaptureData } from '@/context/CaptureContext';
 import { GlassesSelector } from './GlassesSelector';
-import { Glasses, AlertCircle, CheckCircle, Info } from 'lucide-react';
-import type { GlassesFrame, ApiScale } from '@/types/face-validation';
+import { FrameAdjustmentControls } from './FrameAdjustmentControls';
+import { LandmarksDebugOverlay } from './LandmarksDebugOverlay';
+import { Glasses, AlertCircle, CheckCircle, Info, Eye } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import type { GlassesFrame, ApiScale, FrameOffsets } from '@/types/face-validation';
 import { cn } from '@/lib/utils';
 
 // Import frame images
@@ -10,7 +14,7 @@ import frame1Img from '@/assets/frames/frame1.png';
 import frame2Img from '@/assets/frames/frame2.png';
 import frame3Img from '@/assets/frames/frame3.png';
 
-// Real glasses frames with dimensions (mm)
+// Real glasses frames with dimensions (mm) and per-frame offsets
 const FRAMES: GlassesFrame[] = [
   {
     id: '1',
@@ -18,10 +22,11 @@ const FRAMES: GlassesFrame[] = [
     imageUrl: frame1Img,
     category: 'cat-eye',
     color: 'Pink',
-    width: 127,        // frame_width_mm
-    lensWidth: 50,     // lens_width_mm
-    noseBridge: 15,    // bridge_mm
+    width: 127,
+    lensWidth: 50,
+    noseBridge: 15,
     templeLength: 135,
+    offsets: { offsetX: 0, offsetY: 0, scaleAdjust: 1.0, rotationAdjust: 0 },
   },
   {
     id: '2',
@@ -33,6 +38,7 @@ const FRAMES: GlassesFrame[] = [
     lensWidth: 44,
     noseBridge: 18,
     templeLength: 125,
+    offsets: { offsetX: 0, offsetY: 0, scaleAdjust: 1.0, rotationAdjust: 0 },
   },
   {
     id: '3',
@@ -44,6 +50,7 @@ const FRAMES: GlassesFrame[] = [
     lensWidth: 55,
     noseBridge: 18,
     templeLength: 142,
+    offsets: { offsetX: 0, offsetY: 0, scaleAdjust: 1.0, rotationAdjust: 0 },
   },
 ];
 
@@ -51,14 +58,29 @@ type FitCategory = 'tight' | 'perfect' | 'loose';
 type CalibrationMode = 'calibrated' | 'visual-only';
 
 interface FrameTransform {
-  centerX: number;       // Frame center X position in pixels
-  centerY: number;       // Frame center Y position in pixels
+  anchorX: number;       // Nose bridge X position (anchor point)
+  anchorY: number;       // Nose bridge Y position (anchor point)
   scale: number;         // Scale factor for the frame image
   rotationRad: number;   // Rotation in radians
   fit: FitCategory;      // Fit classification
   frameHeightPx: number; // Calculated frame height in pixels
   mode: CalibrationMode; // Whether using calibrated or visual-only mode
+  eyeDistancePx: number; // For debugging
 }
+
+interface AdjustmentValues {
+  offsetX: number;
+  offsetY: number;
+  scaleAdjust: number;
+  rotationAdjust: number;
+}
+
+const DEFAULT_ADJUSTMENTS: AdjustmentValues = {
+  offsetX: 0,
+  offsetY: 0,
+  scaleAdjust: 1.0,
+  rotationAdjust: 0,
+};
 
 /**
  * Calculate center point from array of [x, y] coordinates
@@ -86,29 +108,20 @@ function distance(p1: { x: number; y: number }, p2: { x: number; y: number }): n
  * Clamp rotation to natural head tilt limits (±15 degrees)
  */
 function clampRotation(radians: number): number {
-  const maxTilt = 15 * (Math.PI / 180); // 15 degrees in radians
+  const maxTilt = 15 * (Math.PI / 180);
   return Math.max(-maxTilt, Math.min(maxTilt, radians));
 }
 
 /**
  * Professional frame overlay calculation:
  * 
- * Input:
- * - Face landmarks: left_eye, right_eye, nose_bridge
- * - mm_per_pixel calibration from PD measurement
- * - Real frame specs (frame_width_mm, bridge_mm, lens_width_mm)
- * - Frame PNG natural dimensions
- * 
- * Compute:
- * - eyeDistancePx = distance between eye centers
- * - frameWidthPx = frame_width_mm / mm_per_pixel
- * - scale = frameWidthPx / frameImageNaturalWidth
- * - rotation = atan2(deltaY, deltaX) between eyes (clamped)
- * - centerX/Y = midpoint between eye centers
- * - verticalOffset based on nose_bridge landmark
- * 
- * Fallback:
- * - If mm_per_pixel unreliable: scale frame to ~3× eyeDistancePx
+ * 1. Compute eyeCenterLeft and eyeCenterRight by averaging eye landmarks
+ * 2. Compute noseBridgePoint from nose_bridge landmarks (anchor point)
+ * 3. Compute head tilt: angle = atan2(rightEye.y - leftEye.y, rightEye.x - leftEye.x)
+ * 4. frameWidthPx = frameWidthMM * (1 / mm_per_pixel)
+ * 5. scaleFactor = frameWidthPx / frameImageNaturalWidth
+ * 6. Position anchor at nose bridge point
+ * 7. Apply per-frame offsets if defined
  */
 function computeFrameTransform(
   frame: GlassesFrame,
@@ -118,110 +131,88 @@ function computeFrameTransform(
   frameImageWidth: number,
   frameImageHeight: number
 ): FrameTransform | null {
-  // Step 1: Extract landmark arrays
+  // Extract landmark arrays
   const leftEyePoints = regionPoints.left_eye;
   const rightEyePoints = regionPoints.right_eye;
   const noseBridgePoints = regionPoints.nose_bridge;
 
   if (!leftEyePoints?.length || !rightEyePoints?.length) {
-    console.warn('Missing eye landmarks in region_points');
+    console.warn('Missing eye landmarks');
     return null;
   }
 
-  // Step 2: Compute eye centers by averaging landmark points
+  // Compute eye centers by averaging landmark points
   const leftEyeCenter = getCenter(leftEyePoints);
   const rightEyeCenter = getCenter(rightEyePoints);
 
-  // Step 3: Compute eye distance (PD) in pixels
+  // Compute eye distance (PD) in pixels
   const eyeDistancePx = distance(leftEyeCenter, rightEyeCenter);
 
-  // Step 4: Check mm_per_pixel reliability
+  // Compute nose bridge point (anchor for glasses)
+  let noseBridgePoint: { x: number; y: number };
+  if (noseBridgePoints?.length) {
+    noseBridgePoint = getCenter(noseBridgePoints);
+  } else {
+    // Fallback: use midpoint between eyes, slightly below
+    noseBridgePoint = {
+      x: (leftEyeCenter.x + rightEyeCenter.x) / 2,
+      y: (leftEyeCenter.y + rightEyeCenter.y) / 2 + eyeDistancePx * 0.1,
+    };
+  }
+
+  // Check mm_per_pixel reliability
   const mmPerPixel = scale.mm_per_pixel;
   const isCalibrated = mmPerPixel && mmPerPixel > 0.1 && mmPerPixel < 1.0;
-  
+
   let frameWidthPx: number;
   let mode: CalibrationMode;
 
   if (isCalibrated) {
-    // Calibrated mode: Use mm_per_pixel
+    // Calibrated: frameWidthPx = frameWidthMM * (1 / mm_per_pixel)
     const pixelsPerMM = 1 / mmPerPixel;
     frameWidthPx = frame.width * pixelsPerMM;
     mode = 'calibrated';
   } else {
-    // Fallback: Visual-only mode - scale to ~3× eyeDistancePx
+    // Fallback: scale to ~2.8-3.2× eyeDistancePx
     frameWidthPx = eyeDistancePx * 3.0;
     mode = 'visual-only';
-    console.warn('Using visual-only mode: mm_per_pixel unreliable');
   }
 
-  // Validate fit: clamp if excessively large/small relative to eyeDistancePx
+  // Validate: clamp if excessively large/small
   const minFrameWidth = eyeDistancePx * 2.4;
   const maxFrameWidth = eyeDistancePx * 3.2;
-  
-  if (frameWidthPx < minFrameWidth) {
-    frameWidthPx = minFrameWidth;
-  } else if (frameWidthPx > maxFrameWidth) {
-    frameWidthPx = maxFrameWidth;
-  }
+  if (frameWidthPx < minFrameWidth) frameWidthPx = minFrameWidth;
+  if (frameWidthPx > maxFrameWidth) frameWidthPx = maxFrameWidth;
 
-  // Step 5: Calculate scale factor = frameWidthPx / naturalPNGwidth
+  // Calculate scale factor
   const scaleFactor = frameWidthPx / frameImageWidth;
 
-  // Step 6: Calculate frame height based on aspect ratio
+  // Calculate frame height
   const frameHeightPx = (frameImageHeight / frameImageWidth) * frameWidthPx;
 
-  // Step 7: Position at midpoint between eye centers
-  const eyeCenterX = (leftEyeCenter.x + rightEyeCenter.x) / 2;
-  const eyeCenterY = (leftEyeCenter.y + rightEyeCenter.y) / 2;
-  
-  // Vertical offset: use nose_bridge if available, otherwise use frame height ratio
-  let verticalOffset = frameHeightPx * 0.15; // Default: lift by 15% of frame height
-  
-  if (noseBridgePoints?.length) {
-    const noseBridgeCenter = getCenter(noseBridgePoints);
-    // Position frame so bridge aligns with nose bridge landmark
-    // The nose bridge Y is typically slightly below eye center
-    const noseBridgeOffset = eyeCenterY - noseBridgeCenter.y;
-    verticalOffset = Math.max(0, noseBridgeOffset + frameHeightPx * 0.1);
-  }
-  
-  const adjustedCenterY = eyeCenterY - verticalOffset;
-
-  // Step 8: Compute rotation angle and clamp to natural limits
+  // Compute head tilt angle
   const rawRotation = Math.atan2(
     rightEyeCenter.y - leftEyeCenter.y,
     rightEyeCenter.x - leftEyeCenter.x
   );
   const rotationRad = clampRotation(rawRotation);
 
-  // Fit classification based on frame width vs face width
+  // Fit classification
   const diff = frame.width - faceWidthMm;
   let fit: FitCategory;
-  if (diff <= -3) {
-    fit = 'tight';
-  } else if (diff >= 5) {
-    fit = 'loose';
-  } else {
-    fit = 'perfect';
-  }
-
-  console.log('Frame overlay:', {
-    mode,
-    eyeDistancePx: eyeDistancePx.toFixed(1),
-    frameWidthPx: frameWidthPx.toFixed(1),
-    scaleFactor: scaleFactor.toFixed(3),
-    verticalOffset: verticalOffset.toFixed(1),
-    rotationDeg: (rotationRad * 180 / Math.PI).toFixed(2)
-  });
+  if (diff <= -3) fit = 'tight';
+  else if (diff >= 5) fit = 'loose';
+  else fit = 'perfect';
 
   return {
-    centerX: eyeCenterX,
-    centerY: adjustedCenterY,
+    anchorX: noseBridgePoint.x,
+    anchorY: noseBridgePoint.y,
     scale: scaleFactor,
     rotationRad,
     fit,
     frameHeightPx,
     mode,
+    eyeDistancePx,
   };
 }
 
@@ -251,43 +242,41 @@ export function FramesTab() {
   const [selectedFrame, setSelectedFrame] = useState<GlassesFrame | null>(null);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [frameImageSize, setFrameImageSize] = useState({ width: 0, height: 0 });
+  const [adjustments, setAdjustments] = useState<AdjustmentValues>(DEFAULT_ADJUSTMENTS);
+  const [showDebugOverlay, setShowDebugOverlay] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
 
-  // Get container dimensions when image loads
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     const img = e.currentTarget;
-    // Use displayed size, not natural size
-    setContainerSize({ 
-      width: img.clientWidth, 
-      height: img.clientHeight 
-    });
+    setContainerSize({ width: img.clientWidth, height: img.clientHeight });
   };
 
-  // Get frame image dimensions when it loads
   const handleFrameImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     const img = e.currentTarget;
-    setFrameImageSize({ 
-      width: img.naturalWidth, 
-      height: img.naturalHeight 
-    });
+    setFrameImageSize({ width: img.naturalWidth, height: img.naturalHeight });
   };
 
-  // Compute transform using the professional calculation method
-  const transform = useMemo(() => {
-    if (!selectedFrame || !capturedData?.apiLandmarks) {
-      return null;
+  const handleFrameSelect = (frame: GlassesFrame | null) => {
+    setSelectedFrame(frame);
+    // Apply frame's default offsets if available
+    if (frame?.offsets) {
+      setAdjustments(frame.offsets);
+    } else {
+      setAdjustments(DEFAULT_ADJUSTMENTS);
     }
+  };
+
+  const handleResetAdjustments = () => {
+    setAdjustments(selectedFrame?.offsets || DEFAULT_ADJUSTMENTS);
+  };
+
+  // Compute transform using nose-bridge anchoring
+  const transform = useMemo(() => {
+    if (!selectedFrame || !capturedData?.apiLandmarks) return null;
 
     const { apiLandmarks, measurements } = capturedData;
-    
-    if (!apiLandmarks.region_points || !apiLandmarks.scale) {
-      console.warn('Missing region_points or scale from API');
-      return null;
-    }
-
-    if (frameImageSize.width === 0 || frameImageSize.height === 0) {
-      return null;
-    }
+    if (!apiLandmarks.region_points || !apiLandmarks.scale) return null;
+    if (frameImageSize.width === 0 || frameImageSize.height === 0) return null;
 
     return computeFrameTransform(
       selectedFrame,
@@ -308,26 +297,13 @@ export function FramesTab() {
   }
 
   /**
-   * Step 9: Generate CSS transform for the frame overlay
-   * 
-   * The transform is applied in this order:
-   * 1. translate(-50%, -50%) - Center the image on its position point
-   * 2. scale(scale) - Scale the frame based on PD ratio
-   * 3. rotate(angle) - Rotate to match head tilt
-   */
-  /**
-   * Generate CSS transform for frame overlay (Rule 4):
-   * 
-   * position: absolute;
-   * transform: translate(-50%, -50%) rotate(rotationDeg) scale(scaleFactor);
-   * 
-   * Transform origin is center between both eyes.
-   */
-  /**
    * Generate CSS transform for frame overlay:
    * 
-   * Transform origin at center (bridge point of PNG).
-   * Apply: translate(-50%, -50%), then scale, then rotate.
+   * 1. Position at anchor point (nose bridge)
+   * 2. translate(-50%, -50%) to center PNG bridge at anchor
+   * 3. Apply rotation to match head tilt
+   * 4. Apply scale factor
+   * 5. Apply user adjustments
    */
   const getGlassesStyle = (): React.CSSProperties => {
     if (!transform || containerSize.width === 0 || !capturedData?.processedImageDataUrl) {
@@ -339,27 +315,25 @@ export function FramesTab() {
 
     const naturalWidth = img.naturalWidth;
     const naturalHeight = img.naturalHeight;
-    
-    // Calculate scale ratios from natural to displayed size
+
+    // Scale ratios from natural to displayed size
     const scaleX = containerSize.width / naturalWidth;
     const scaleY = containerSize.height / naturalHeight;
-
-    // Convert API coordinates to displayed coordinates
-    const displayX = transform.centerX * scaleX;
-    const displayY = transform.centerY * scaleY;
-    
-    // Scale factor adjusted for display scaling (use uniform scale)
     const displayScaleRatio = Math.min(scaleX, scaleY);
-    const displayScale = transform.scale * displayScaleRatio;
 
-    // Rotation: +180° to flip frame to face user (PNG faces outward by default)
-    const rotationDeg = (transform.rotationRad * (180 / Math.PI)) + 180;
+    // Convert anchor point to display coordinates
+    const displayAnchorX = transform.anchorX * scaleX + adjustments.offsetX;
+    const displayAnchorY = transform.anchorY * scaleY + adjustments.offsetY;
+
+    // Apply adjustments to scale and rotation
+    const displayScale = transform.scale * displayScaleRatio * adjustments.scaleAdjust;
+    const rotationDeg = (transform.rotationRad * (180 / Math.PI)) + 180 + adjustments.rotationAdjust;
 
     return {
       position: 'absolute',
-      left: `${displayX}px`,
-      top: `${displayY}px`,
-      // Apply: translate(-50%, -50%) to center on bridge, then scale, then rotate
+      left: `${displayAnchorX}px`,
+      top: `${displayAnchorY}px`,
+      // Order: translate to center, then scale, then rotate
       transform: `translate(-50%, -50%) scale(${displayScale}) rotate(${rotationDeg}deg)`,
       transformOrigin: 'center center',
       pointerEvents: 'none',
@@ -379,26 +353,41 @@ export function FramesTab() {
             <Glasses className="h-5 w-5 text-primary" />
             <h3 className="font-semibold text-foreground">Virtual Try-On Preview</h3>
           </div>
-          
-          {/* Fit indicator badge */}
-          {transform && (
+
+          <div className="flex items-center gap-3">
+            {/* Debug overlay toggle */}
             <div className="flex items-center gap-2">
-              {transform.mode === 'visual-only' && (
-                <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-amber-100 text-amber-700 text-xs">
-                  <AlertCircle className="h-3 w-3" />
-                  <span>Visual Only</span>
-                </div>
-              )}
-              {fitInfo && (
-                <div className={cn("flex items-center gap-1.5 px-3 py-1 rounded-full bg-background border", fitInfo.color)}>
-                  <FitIcon className="h-4 w-4" />
-                  <span className="text-xs font-medium">{fitInfo.label}</span>
-                </div>
-              )}
+              <Switch
+                id="debug-overlay"
+                checked={showDebugOverlay}
+                onCheckedChange={setShowDebugOverlay}
+              />
+              <Label htmlFor="debug-overlay" className="text-xs text-muted-foreground cursor-pointer">
+                <Eye className="h-3 w-3 inline mr-1" />
+                Landmarks
+              </Label>
             </div>
-          )}
+
+            {/* Fit badges */}
+            {transform && (
+              <div className="flex items-center gap-2">
+                {transform.mode === 'visual-only' && (
+                  <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-amber-100 text-amber-700 text-xs">
+                    <AlertCircle className="h-3 w-3" />
+                    <span>Visual Only</span>
+                  </div>
+                )}
+                {fitInfo && (
+                  <div className={cn("flex items-center gap-1.5 px-3 py-1 rounded-full bg-background border", fitInfo.color)}>
+                    <FitIcon className="h-4 w-4" />
+                    <span className="text-xs font-medium">{fitInfo.label}</span>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
-        
+
         <div className="relative rounded-lg overflow-hidden bg-black aspect-[4/3]">
           {/* User's face image */}
           <img
@@ -408,7 +397,18 @@ export function FramesTab() {
             className="w-full h-full object-contain"
             onLoad={handleImageLoad}
           />
-          
+
+          {/* Landmarks debug overlay */}
+          {showDebugOverlay && capturedData.apiLandmarks && imageRef.current && (
+            <LandmarksDebugOverlay
+              landmarks={capturedData.apiLandmarks}
+              containerWidth={containerSize.width}
+              containerHeight={containerSize.height}
+              naturalWidth={imageRef.current.naturalWidth}
+              naturalHeight={imageRef.current.naturalHeight}
+            />
+          )}
+
           {/* Frame overlay with CSS transforms */}
           {selectedFrame && transform && (
             <img
@@ -444,21 +444,31 @@ export function FramesTab() {
           </div>
         )}
 
-        {/* Debug info (remove in production) */}
+        {/* Debug info */}
         {transform && (
           <div className="mt-2 text-xs text-muted-foreground font-mono">
-            Scale: {transform.scale.toFixed(3)} | 
-            Rotation: {(transform.rotationRad * 180 / Math.PI).toFixed(1)}° | 
-            Position: ({transform.centerX.toFixed(0)}, {transform.centerY.toFixed(0)})
+            Scale: {(transform.scale * adjustments.scaleAdjust).toFixed(3)} |
+            Rotation: {((transform.rotationRad * 180 / Math.PI) + adjustments.rotationAdjust).toFixed(1)}° |
+            Anchor: ({transform.anchorX.toFixed(0)}, {transform.anchorY.toFixed(0)}) |
+            PD: {transform.eyeDistancePx.toFixed(0)}px
           </div>
         )}
       </div>
+
+      {/* Manual adjustment controls */}
+      {selectedFrame && (
+        <FrameAdjustmentControls
+          values={adjustments}
+          onChange={setAdjustments}
+          onReset={handleResetAdjustments}
+        />
+      )}
 
       {/* Frames selector */}
       <GlassesSelector
         frames={FRAMES}
         selectedFrame={selectedFrame}
-        onSelectFrame={setSelectedFrame}
+        onSelectFrame={handleFrameSelect}
         faceWidthMm={capturedData.measurements.face_width}
       />
     </div>
