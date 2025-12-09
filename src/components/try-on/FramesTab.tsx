@@ -276,8 +276,8 @@ export function FramesTab() {
     // Apply scale factor with display ratio and user adjustment
     const finalScale = transform.scaleFactor * displayScaleRatio * adjustments.scaleAdjust;
     
-    // Apply rotation with 180° offset (frame is upside down in PNG) and user adjustment
-    const finalRotation = transform.angleRad + Math.PI + (adjustments.rotationAdjust * Math.PI / 180);
+    // Apply rotation (head tilt angle) with user adjustment
+    const finalRotation = transform.angleRad + (adjustments.rotationAdjust * Math.PI / 180);
 
     return {
       position: 'absolute',
