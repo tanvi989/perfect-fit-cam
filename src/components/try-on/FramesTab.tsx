@@ -55,6 +55,7 @@ interface FrameTransform {
   scale: number;       // Scale factor for the frame image
   rotationRad: number; // Rotation in radians
   fit: FitCategory;    // Fit classification
+  frameHeightPx: number; // Calculated frame height in pixels
 }
 
 /**
@@ -103,7 +104,6 @@ function computeFrameTransform(
   // Step 1: Extract landmark arrays from API response
   const leftEyePoints = regionPoints.left_eye;
   const rightEyePoints = regionPoints.right_eye;
-  const noseBridgePoints = regionPoints.nose_bridge;
 
   if (!leftEyePoints?.length || !rightEyePoints?.length) {
     console.warn('Missing eye landmarks in region_points');
@@ -116,55 +116,40 @@ function computeFrameTransform(
 
   console.log('Eye centers:', { leftEyeCenter, rightEyeCenter });
 
-  // Step 3: Compute PD in pixels (distance between eye centers)
-  const pdPx = distance(leftEyeCenter, rightEyeCenter);
-  console.log('PD in pixels:', pdPx);
+  // Step 3: Compute eye distance (PD) in pixels
+  const eyeDistancePx = Math.abs(rightEyeCenter.x - leftEyeCenter.x);
+  console.log('Eye distance (px):', eyeDistancePx);
 
   const mmPerPixel = scale.mm_per_pixel || 0.3;
+  const pixelsPerMM = 1 / mmPerPixel;
 
-  // Step 4 & 5: Calculate scale based on frame width vs face width comparison
-  // If frame is wider than face, scale down. If frame is narrower, scale up.
+  // Step 4: Calculate frame size using physical dimensions
+  // targetFrameWidthPx = frameWidthMM * pixelsPerMM
   const frameWidthMm = frame.width;
-  const faceWidthPx = faceWidthMm / mmPerPixel;
-  const frameWidthPx = frameWidthMm / mmPerPixel;
+  const targetFrameWidthPx = frameWidthMm * pixelsPerMM;
   
-  // Scale factor based on face width to frame width ratio
-  // This ensures the frame fits proportionally to the user's face
-  const scaleFactor = faceWidthPx / frameWidthPx;
+  // Step 5: Calculate scale factor to resize frame image to target size
+  // Scale = targetFrameWidthPx / originalFrameImageWidth
+  const scaleFactor = targetFrameWidthPx / frameImageWidth;
   
-  console.log('Frame width (mm):', frameWidthMm, 'Face width (mm):', faceWidthMm);
-  console.log('Scale factor (face/frame):', scaleFactor);
+  console.log('Frame width (mm):', frameWidthMm, 'Target width (px):', targetFrameWidthPx);
+  console.log('Frame image width:', frameImageWidth, 'Scale factor:', scaleFactor);
 
-  // Step 7: Compute head tilt angle for rotation
-  // Add 180 degrees (π radians) because frames are upside down
-  const baseRotationRad = Math.atan2(
-    leftEyeCenter.y - rightEyeCenter.y,
-    leftEyeCenter.x - rightEyeCenter.x
+  // Step 6: Calculate frame height based on aspect ratio
+  const frameHeightPx = (frameImageHeight / frameImageWidth) * targetFrameWidthPx;
+
+  // Step 7: Position at eye center (like reference function)
+  const eyeCenterX = (leftEyeCenter.x + rightEyeCenter.x) / 2;
+  const eyeCenterY = (leftEyeCenter.y + rightEyeCenter.y) / 2;
+
+  // Step 8: Compute head tilt angle for rotation (no 180° addition - reference doesn't use it)
+  const rotationRad = Math.atan2(
+    rightEyeCenter.y - leftEyeCenter.y,
+    rightEyeCenter.x - leftEyeCenter.x
   );
-  const rotationRad = baseRotationRad + Math.PI; // Add 180 degrees
   
   console.log('Rotation (rad):', rotationRad, 'Rotation (deg):', rotationRad * (180 / Math.PI));
-
-  // Step 8: Compute frame placement position
-  // frame_center_x = midpoint between eyes
-  const frameCenterX = (leftEyeCenter.x + rightEyeCenter.x) / 2;
-
-  // frame_center_y = nose_bridge[0].y - (frame_image_height * scale * 0.25)
-  // This places the frame slightly above nose bridge so it sits naturally on eyes
-  let frameCenterY: number;
-  
-  if (noseBridgePoints?.length > 0) {
-    // Use nose bridge top point for vertical positioning
-    const noseBridgeTop = noseBridgePoints[0];
-    const scaledFrameHeight = frameImageHeight * scaleFactor;
-    frameCenterY = noseBridgeTop[1] - (scaledFrameHeight * 0.25);
-  } else {
-    // Fallback: use eye midpoint with offset
-    const eyeMidpointY = (leftEyeCenter.y + rightEyeCenter.y) / 2;
-    frameCenterY = eyeMidpointY;
-  }
-
-  console.log('Frame center:', { x: frameCenterX, y: frameCenterY });
+  console.log('Frame center:', { x: eyeCenterX, y: eyeCenterY });
 
   // Fit classification based on frame width vs face width
   const diff = frame.width - faceWidthMm;
@@ -178,11 +163,12 @@ function computeFrameTransform(
   }
 
   return {
-    centerX: frameCenterX,
-    centerY: frameCenterY,
+    centerX: eyeCenterX,
+    centerY: eyeCenterY,
     scale: scaleFactor,
     rotationRad,
     fit,
+    frameHeightPx,  // Pass this for vertical offset calculation
   };
 }
 
@@ -296,8 +282,8 @@ export function FramesTab() {
     const displayX = transform.centerX * scaleX;
     const displayY = transform.centerY * scaleY;
 
-    // Add additional 180° rotation to flip the frame right-side up
-    const rotationDeg = (transform.rotationRad * (180 / Math.PI)) + 180;
+    // Rotation in degrees (no extra 180° needed - reference approach)
+    const rotationDeg = transform.rotationRad * (180 / Math.PI);
 
     return {
       position: 'absolute',
