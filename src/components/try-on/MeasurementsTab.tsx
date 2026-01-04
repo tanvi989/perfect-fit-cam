@@ -119,7 +119,7 @@ export function MeasurementsTab() {
             <div className="bg-muted/50 rounded-lg p-4 text-center">
               <p className="text-sm text-muted-foreground">Face Width</p>
               <p className="text-xl font-semibold text-foreground">
-                {measurements.face_width.toFixed(1)} mm
+                {measurements.nose_total.toFixed(1)} mm
               </p>
             </div>
             <div className="bg-muted/50 rounded-lg p-4 text-center">
