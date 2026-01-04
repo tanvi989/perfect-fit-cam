@@ -115,7 +115,7 @@ export function MeasurementsTab() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-3 gap-4">
             <div className="bg-muted/50 rounded-lg p-4 text-center">
               <p className="text-sm text-muted-foreground">Face Width</p>
               <p className="text-xl font-semibold text-foreground">
@@ -126,12 +126,6 @@ export function MeasurementsTab() {
               <p className="text-sm text-muted-foreground">Face Height</p>
               <p className="text-xl font-semibold text-foreground">
                 {measurements.face_height.toFixed(1)} mm
-              </p>
-            </div>
-            <div className="bg-muted/50 rounded-lg p-4 text-center">
-              <p className="text-sm text-muted-foreground">Fitting Height</p>
-              <p className="text-xl font-semibold text-foreground">
-                {measurements.fitting_height.toFixed(1)} mm
               </p>
             </div>
             <div className="bg-muted/50 rounded-lg p-4 text-center">
@@ -153,7 +147,7 @@ export function MeasurementsTab() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 gap-4">
             <div className="bg-muted/50 rounded-lg p-4 text-center">
               <p className="text-sm text-muted-foreground">Left</p>
               <p className="text-xl font-semibold text-foreground">
@@ -164,12 +158,6 @@ export function MeasurementsTab() {
               <p className="text-sm text-muted-foreground">Right</p>
               <p className="text-xl font-semibold text-foreground">
                 {measurements.nose_right.toFixed(1)} mm
-              </p>
-            </div>
-            <div className="bg-muted/50 rounded-lg p-4 text-center">
-              <p className="text-sm text-muted-foreground">Total</p>
-              <p className="text-xl font-semibold text-foreground">
-                {measurements.face_width.toFixed(1)} mm
               </p>
             </div>
           </div>
