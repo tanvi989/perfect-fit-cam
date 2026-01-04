@@ -112,8 +112,7 @@ function getCenter(points: number[][]): { x: number; y: number } {
 function computeFrameTransform(
   frame: GlassesFrame,
   regionPoints: any,
-  faceWidthMm: number,
-  scale: ApiScale
+  faceWidthMm: number
 ): FrameTransform | null {
   // Extract landmark arrays for eyes
   const leftEyePoints = regionPoints.left_eye;
@@ -140,21 +139,9 @@ function computeFrameTransform(
     Math.pow(leftCenter.y - rightCenter.y, 2)
   );
 
-  // Step 4: Calculate scale factor based on frame width vs face width
-  // Convert frame width from mm to pixels using the API scale
-  const pxPerMm = scale.pixels_per_mm || (1 / scale.mm_per_pixel);
-  const frameWidthPx = frame.width * pxPerMm;
-  const faceWidthPx = faceWidthMm * pxPerMm;
-  
-  // Scale factor: frame should appear at the correct size relative to face
-  // If frame is smaller than face, it should appear smaller
-  // If frame is larger than face, it should appear larger
+  // Step 4: Calculate scale factor
   const frameInternalWidth = FRAME_PNG_INTERNAL_EYE_WIDTH_PX[frame.id] || 200;
-  
-  // Calculate what the frame width should be in pixels on the display
-  // based on the ratio of frame width to face width
-  const targetFrameWidthPx = (frame.width / faceWidthMm) * faceWidthPx;
-  const scaleFactor = targetFrameWidthPx / (frameInternalWidth * 1.5); // 1.5 is approximate ratio of full frame to eye width
+  const scaleFactor = eyeDistancePx / frameInternalWidth;
 
   // Step 5: Position - midpoint between eyes
   const midX = (leftCenter.x + rightCenter.x) / 2;
@@ -233,13 +220,12 @@ export function FramesTab() {
     if (!selectedFrame || !capturedData?.apiLandmarks) return null;
 
     const { apiLandmarks, measurements } = capturedData;
-    if (!apiLandmarks.region_points || !apiLandmarks.scale) return null;
+    if (!apiLandmarks.region_points) return null;
 
     return computeFrameTransform(
       selectedFrame,
       apiLandmarks.region_points,
-      measurements.face_width,
-      apiLandmarks.scale
+      measurements.face_width
     );
   }, [selectedFrame, capturedData]);
 
