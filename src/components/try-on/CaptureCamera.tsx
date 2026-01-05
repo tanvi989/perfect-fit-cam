@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useCamera } from '@/hooks/useCamera';
 import { useFaceDetection } from '@/hooks/useFaceDetection';
 import { useCaptureData } from '@/context/CaptureContext';
+import { useVoiceGuidance } from '@/hooks/useVoiceGuidance';
 import { CameraPermission } from './CameraPermission';
 import { FaceGuideOverlay } from './FaceGuideOverlay';
 import { Loader2 } from 'lucide-react';
@@ -21,12 +22,37 @@ export function CaptureCamera() {
   const [processingStep, setProcessingStep] = useState('');
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
   const { setCapturedData } = useCaptureData();
+  const { speakGuidance, cancel: cancelVoice } = useVoiceGuidance({ enabled: true, debounceMs: 3000 });
 
   const validationState = useFaceDetection({
     videoRef,
     canvasRef,
     isActive: cameraState === 'granted' && !isCapturing && !isProcessing,
   });
+
+  // Voice guidance for face positioning
+  useEffect(() => {
+    if (cameraState === 'granted' && !isCapturing && !isProcessing && validationState.faceDetected) {
+      if (!validationState.allChecksPassed) {
+        speakGuidance(validationState.validationChecks);
+      }
+    }
+  }, [
+    cameraState,
+    isCapturing,
+    isProcessing,
+    validationState.faceDetected,
+    validationState.allChecksPassed,
+    validationState.validationChecks,
+    speakGuidance,
+  ]);
+
+  // Cancel voice when capturing starts
+  useEffect(() => {
+    if (isCapturing || isProcessing) {
+      cancelVoice();
+    }
+  }, [isCapturing, isProcessing, cancelVoice]);
 
   // Attach stream to video element when both are available
   useEffect(() => {
