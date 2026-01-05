@@ -18,15 +18,15 @@ const LANDMARK_INDICES = {
   faceRight: 454,
 };
 
-// Target distance: ~25cm from camera
+// Target distance: ~45cm from camera
 // Average adult face width: ~14-15cm
-// At 25cm with typical webcam FOV (~60°), face should be ~30-40% of frame
+// At 45cm with typical webcam FOV (~60°), face should be ~17-23% of frame
 const THRESHOLDS = {
   maxHeadTilt: 10, // degrees
   maxHeadRotation: 15, // degrees
-  targetFaceWidthPercent: 35, // ideal face width % at 25cm
-  minFaceWidthPercent: 30, // too far - move closer
-  maxFaceWidthPercent: 40, // too close - move back
+  targetFaceWidthPercent: 20, // ideal face width % at 45cm
+  minFaceWidthPercent: 17, // too far - move closer
+  maxFaceWidthPercent: 23, // too close - move back
   minBrightness: 80,
   maxBrightness: 220,
   minContrast: 0.3,
@@ -170,14 +170,14 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
       },
       {
         id: 'distance',
-        label: 'Distance (~25cm)',
+        label: 'Distance (~45cm)',
         passed: state.faceWidthPercent >= THRESHOLDS.minFaceWidthPercent && 
                 state.faceWidthPercent <= THRESHOLDS.maxFaceWidthPercent,
         message: state.faceWidthPercent < THRESHOLDS.minFaceWidthPercent 
           ? 'Move closer to camera' 
           : state.faceWidthPercent > THRESHOLDS.maxFaceWidthPercent 
             ? 'Move back from camera' 
-            : 'Perfect distance (~25cm)',
+            : 'Perfect distance (~45cm)',
         severity: state.faceWidthPercent >= THRESHOLDS.minFaceWidthPercent && 
                   state.faceWidthPercent <= THRESHOLDS.maxFaceWidthPercent ? 'pass' : 'fail',
       },
