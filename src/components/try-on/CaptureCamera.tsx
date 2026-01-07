@@ -1,19 +1,23 @@
-import { useRef, useEffect, useState, useCallback } from 'react';
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCamera } from '@/hooks/useCamera';
 import { useFaceDetection } from '@/hooks/useFaceDetection';
+import { useCreditCardDetection } from '@/hooks/useCreditCardDetection';
 import { useCaptureData } from '@/context/CaptureContext';
 import { useVoiceGuidance } from '@/hooks/useVoiceGuidance';
 import { CameraPermission } from './CameraPermission';
 import { FaceGuideOverlay } from './FaceGuideOverlay';
+import { CreditCardGuide } from './CreditCardGuide';
 import { Loader2 } from 'lucide-react';
 import { detectGlasses, removeGlasses, detectLandmarks } from '@/services/glassesApi';
 import { toast } from 'sonner';
+import type { ValidationCheck } from '@/types/face-validation';
 
 export function CaptureCamera() {
   const navigate = useNavigate();
   const { cameraState, error, videoRef, streamRef, requestCamera } = useCamera();
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const cardDetectionCanvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [videoSize, setVideoSize] = useState({ width: 1280, height: 720 });
   const [countdown, setCountdown] = useState<number | null>(null);
@@ -22,28 +26,89 @@ export function CaptureCamera() {
   const [processingStep, setProcessingStep] = useState('');
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
   const { setCapturedData } = useCaptureData();
-  const { speakGuidance, cancel: cancelVoice } = useVoiceGuidance({ enabled: true, debounceMs: 3000 });
+  const { speakGuidance, speak, cancel: cancelVoice } = useVoiceGuidance({ enabled: true, debounceMs: 3000 });
 
-  const validationState = useFaceDetection({
+  const faceValidationState = useFaceDetection({
     videoRef,
     canvasRef,
     isActive: cameraState === 'granted' && !isCapturing && !isProcessing,
   });
 
-  // Voice guidance for face positioning
+  // Calculate card guide area based on face position (normalized coordinates)
+  const cardGuideArea = useMemo(() => {
+    if (!faceValidationState.landmarks) {
+      // Default position when no face detected - right side of frame near cheek area
+      return {
+        x: 0.55, // Right side (mirrored)
+        y: 0.45,  // Mid-face level
+        width: 0.2,
+        height: 0.12,
+      };
+    }
+    
+    // Position relative to detected face - on the right cheek (from camera perspective)
+    const faceRight = faceValidationState.landmarks.faceRight;
+    const noseTip = faceValidationState.landmarks.noseTip;
+    
+    return {
+      x: faceRight.x + 0.05, // Just outside the right side of face
+      y: noseTip.y - 0.02, // At nose level
+      width: 0.18,
+      height: 0.11,
+    };
+  }, [faceValidationState.landmarks]);
+
+  const cardDetectionState = useCreditCardDetection({
+    videoRef,
+    canvasRef: cardDetectionCanvasRef,
+    isActive: cameraState === 'granted' && !isCapturing && !isProcessing && faceValidationState.faceDetected,
+    cardGuideArea,
+  });
+
+  // Combined validation checks including credit card
+  const combinedValidationChecks = useMemo((): ValidationCheck[] => {
+    const faceChecks = [...faceValidationState.validationChecks];
+    
+    // Add credit card validation check
+    const cardCheck: ValidationCheck = {
+      id: 'credit-card',
+      label: 'Credit Card',
+      passed: cardDetectionState.cardDetected && cardDetectionState.cardFullyVisible,
+      message: !cardDetectionState.cardDetected
+        ? 'Place card on cheek'
+        : !cardDetectionState.cardFullyVisible
+          ? 'Card not fully visible'
+          : cardDetectionState.cardTilted
+            ? 'Hold card flat'
+            : 'Card detected',
+      severity: cardDetectionState.cardDetected && cardDetectionState.cardFullyVisible ? 'pass' : 'fail',
+    };
+    
+    faceChecks.push(cardCheck);
+    return faceChecks;
+  }, [faceValidationState.validationChecks, cardDetectionState]);
+
+  // All checks passed including credit card
+  const allChecksPassed = useMemo(() => {
+    return faceValidationState.allChecksPassed && 
+           cardDetectionState.cardDetected && 
+           cardDetectionState.cardFullyVisible;
+  }, [faceValidationState.allChecksPassed, cardDetectionState.cardDetected, cardDetectionState.cardFullyVisible]);
+
+  // Voice guidance for face positioning and card placement
   useEffect(() => {
-    if (cameraState === 'granted' && !isCapturing && !isProcessing && validationState.faceDetected) {
-      if (!validationState.allChecksPassed) {
-        speakGuidance(validationState.validationChecks);
+    if (cameraState === 'granted' && !isCapturing && !isProcessing && faceValidationState.faceDetected) {
+      if (!allChecksPassed) {
+        speakGuidance(combinedValidationChecks);
       }
     }
   }, [
     cameraState,
     isCapturing,
     isProcessing,
-    validationState.faceDetected,
-    validationState.allChecksPassed,
-    validationState.validationChecks,
+    faceValidationState.faceDetected,
+    allChecksPassed,
+    combinedValidationChecks,
     speakGuidance,
   ]);
 
@@ -88,10 +153,20 @@ export function CaptureCamera() {
     };
   }, [videoRef, cameraState]);
 
+  // Download image function
+  const downloadImage = useCallback((dataUrl: string, filename: string) => {
+    const link = document.createElement('a');
+    link.href = dataUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }, []);
+
   // Capture and process image
   const captureAndProcess = useCallback(async () => {
     const video = videoRef.current;
-    if (!video || !validationState.landmarks) return;
+    if (!video || !faceValidationState.landmarks) return;
 
     setIsProcessing(true);
     
@@ -109,6 +184,11 @@ export function CaptureCamera() {
       ctx.drawImage(video, 0, 0);
 
       const imageDataUrl = canvas.toDataURL('image/jpeg', 0.9);
+
+      // Download the captured image with credit card reference
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+      downloadImage(imageDataUrl, `face-capture-with-card-${timestamp}.jpg`);
+      speak('Image captured and downloaded');
 
       // Step 1: Detect glasses
       setProcessingStep('Detecting glasses...');
@@ -140,7 +220,7 @@ export function CaptureCamera() {
         imageDataUrl,
         processedImageDataUrl,
         glassesDetected,
-        landmarks: validationState.landmarks,
+        landmarks: faceValidationState.landmarks,
         measurements: measureResult.landmarks.mm,
         apiLandmarks: measureResult.landmarks, // Store full response with region_points and scale
         timestamp: Date.now(),
@@ -154,14 +234,14 @@ export function CaptureCamera() {
       setCountdown(null);
       setIsProcessing(false);
     }
-  }, [videoRef, validationState.landmarks, setCapturedData, navigate]);
+  }, [videoRef, faceValidationState.landmarks, setCapturedData, navigate, downloadImage, speak]);
 
   // Auto-capture countdown when all checks pass
   useEffect(() => {
-    if (validationState.allChecksPassed && !isCapturing && countdown === null) {
+    if (allChecksPassed && !isCapturing && countdown === null) {
       setIsCapturing(true);
       setCountdown(3);
-    } else if (!validationState.allChecksPassed && isCapturing) {
+    } else if (!allChecksPassed && isCapturing) {
       // Reset if validation fails during countdown
       if (countdownRef.current) {
         clearInterval(countdownRef.current);
@@ -170,7 +250,7 @@ export function CaptureCamera() {
       setIsCapturing(false);
       setCountdown(null);
     }
-  }, [validationState.allChecksPassed, isCapturing, countdown]);
+  }, [allChecksPassed, isCapturing, countdown]);
 
   // Countdown timer
   useEffect(() => {
@@ -215,20 +295,28 @@ export function CaptureCamera() {
         style={{ transform: 'scaleX(-1)' }}
       />
       <canvas ref={canvasRef} className="hidden" />
+      <canvas ref={cardDetectionCanvasRef} className="hidden" />
 
       {/* Face guide overlay with oval - always visible */}
       <FaceGuideOverlay
-        isValid={validationState.allChecksPassed}
-        faceDetected={validationState.faceDetected}
-        validationChecks={validationState.validationChecks}
+        isValid={allChecksPassed}
+        faceDetected={faceValidationState.faceDetected}
+        validationChecks={combinedValidationChecks}
         debugValues={{
-          faceWidthPercent: validationState.faceWidthPercent,
-          leftEyeAR: validationState.leftEyeAR,
-          rightEyeAR: validationState.rightEyeAR,
-          headTilt: validationState.headTilt,
-          headRotation: validationState.headRotation,
-          brightness: validationState.brightness,
+          faceWidthPercent: faceValidationState.faceWidthPercent,
+          leftEyeAR: faceValidationState.leftEyeAR,
+          rightEyeAR: faceValidationState.rightEyeAR,
+          headTilt: faceValidationState.headTilt,
+          headRotation: faceValidationState.headRotation,
+          brightness: faceValidationState.brightness,
         }}
+      />
+
+      {/* Credit card guide overlay */}
+      <CreditCardGuide
+        isValid={cardDetectionState.cardDetected && cardDetectionState.cardFullyVisible}
+        cardDetected={cardDetectionState.cardDetected}
+        cardFullyVisible={cardDetectionState.cardFullyVisible}
       />
 
       {/* Countdown overlay */}
