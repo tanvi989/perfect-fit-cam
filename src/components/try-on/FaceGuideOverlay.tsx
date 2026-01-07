@@ -123,30 +123,30 @@ export function FaceGuideOverlay({ isValid, faceDetected, validationChecks, debu
         </div>
       )}
 
-      {/* Validation checklist at bottom */}
-      <div className="absolute bottom-6 left-4 right-4">
-        <div className="bg-black/60 backdrop-blur-md rounded-2xl p-4 max-w-md mx-auto">
-          <div className="grid grid-cols-2 gap-2">
+      {/* Validation checklist on left side */}
+      <div className="absolute left-2 md:left-4 top-1/2 -translate-y-1/2">
+        <div className="bg-black/60 backdrop-blur-md rounded-2xl p-3 md:p-4 max-w-[160px] md:max-w-[180px]">
+          <div className="flex flex-col gap-2">
             {validationChecks.map((check) => (
               <div
                 key={check.id}
                 className={cn(
-                  "flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-all duration-200",
+                  "flex items-center gap-2 px-2 md:px-3 py-1.5 md:py-2 rounded-lg text-sm transition-all duration-200",
                   check.passed ? "bg-validation-pass/20" : "bg-white/10"
                 )}
               >
                 <div className={cn(
-                  "flex-shrink-0 w-5 h-5 rounded-full flex items-center justify-center",
+                  "flex-shrink-0 w-4 h-4 md:w-5 md:h-5 rounded-full flex items-center justify-center",
                   check.passed ? "bg-validation-pass" : "bg-white/30"
                 )}>
                   {check.passed ? (
-                    <Check className="h-3 w-3 text-white" />
+                    <Check className="h-2.5 w-2.5 md:h-3 md:w-3 text-white" />
                   ) : (
-                    <X className="h-3 w-3 text-white/70" />
+                    <X className="h-2.5 w-2.5 md:h-3 md:w-3 text-white/70" />
                   )}
                 </div>
                 <span className={cn(
-                  "text-xs font-medium truncate",
+                  "text-[10px] md:text-xs font-medium",
                   check.passed ? "text-white" : "text-white/70"
                 )}>
                   {check.label}
