@@ -60,9 +60,10 @@ export function useVoiceGuidance(options: VoiceGuidanceOptions = {}) {
 
     // Priority order for guidance
     const distanceCheck = validationChecks.find(c => c.id === 'distance');
-    const positionCheck = validationChecks.find(c => c.id === 'position');
-    const tiltCheck = validationChecks.find(c => c.id === 'tilt');
-    const rotationCheck = validationChecks.find(c => c.id === 'rotation');
+    const positionCheck = validationChecks.find(c => c.id === 'position' || c.id === 'face-detected');
+    const tiltCheck = validationChecks.find(c => c.id === 'tilt' || c.id === 'head-straight');
+    const rotationCheck = validationChecks.find(c => c.id === 'rotation' || c.id === 'no-rotation');
+    const cardCheck = validationChecks.find(c => c.id === 'credit-card');
 
     // Speak the most important failed check
     if (distanceCheck && !distanceCheck.passed) {
@@ -86,6 +87,18 @@ export function useVoiceGuidance(options: VoiceGuidanceOptions = {}) {
 
     if (rotationCheck && !rotationCheck.passed) {
       speak('Please look straight at the camera');
+      return;
+    }
+
+    // Credit card check
+    if (cardCheck && !cardCheck.passed) {
+      if (cardCheck.message.includes('not visible')) {
+        speak('Credit card is not fully visible. Please ensure the entire card is in the box');
+      } else if (cardCheck.message.includes('tilted')) {
+        speak('Please hold the card flat without tilting');
+      } else {
+        speak('Please place a credit card flat on your cheek, inside the yellow box');
+      }
       return;
     }
   }, [enabled, speak]);

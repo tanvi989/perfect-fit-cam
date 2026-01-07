@@ -39,6 +39,13 @@ export interface FaceValidationState {
   validationChecks: ValidationCheck[];
 }
 
+export interface CreditCardValidation {
+  cardDetected: boolean;
+  cardFullyVisible: boolean;
+  cardInPosition: boolean;
+  cardTilted: boolean;
+}
+
 export interface PDMeasurement {
   leftPupilX: number;
   rightPupilX: number;
