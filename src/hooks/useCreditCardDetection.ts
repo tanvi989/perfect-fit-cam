@@ -160,10 +160,11 @@ export function useCreditCardDetection({
     const hasCardLikeColors = colorVariance > 500 && colorVariance < 5000;
     if (hasCardLikeColors) confidence += 0.2;
 
-    // Determine detection state
-    const cardDetected = confidence > 0.5;
-    const cardFullyVisible = confidence > 0.6;
-    const cardInPosition = confidence > 0.7;
+    // Determine detection state - stricter thresholds for mobile
+    // Require higher confidence to avoid false positives
+    const cardDetected = confidence > 0.7;
+    const cardFullyVisible = confidence > 0.8;
+    const cardInPosition = confidence > 0.85;
     const cardTilted = hasBalancedEdges && edgeBalance < 0.5;
 
     setDetectionState({
