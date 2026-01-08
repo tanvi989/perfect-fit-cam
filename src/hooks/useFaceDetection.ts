@@ -169,19 +169,6 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
         severity: Math.abs(state.headRotation) <= THRESHOLDS.maxHeadRotation ? 'pass' : 'fail',
       },
       {
-        id: 'distance',
-        label: 'Distance (~45cm)',
-        passed: state.faceWidthPercent >= THRESHOLDS.minFaceWidthPercent && 
-                state.faceWidthPercent <= THRESHOLDS.maxFaceWidthPercent,
-        message: state.faceWidthPercent < THRESHOLDS.minFaceWidthPercent 
-          ? 'Move closer to camera' 
-          : state.faceWidthPercent > THRESHOLDS.maxFaceWidthPercent 
-            ? 'Move back from camera' 
-            : 'Perfect distance (~45cm)',
-        severity: state.faceWidthPercent >= THRESHOLDS.minFaceWidthPercent && 
-                  state.faceWidthPercent <= THRESHOLDS.maxFaceWidthPercent ? 'pass' : 'fail',
-      },
-      {
         id: 'lighting',
         label: 'Lighting',
         passed: state.brightness >= THRESHOLDS.minBrightness && 
