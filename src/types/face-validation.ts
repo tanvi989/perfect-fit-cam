@@ -77,16 +77,31 @@ export interface GlassesFrame {
 export type CameraState = 'requesting' | 'granted' | 'denied' | 'error';
 
 export interface ApiMeasurements {
-  pd_total: number;
+  pd: number;
   pd_left: number;
   pd_right: number;
-  nose_left: number;
-  nose_right: number;
-  nose_total: number;
-  fitting_height: number;
+  nose_bridge_left: number;
+  nose_bridge_right: number;
   face_width: number;
   face_height: number;
-  face_shape_ratio: number;
+  face_ratio: number;
+}
+
+export interface ApiScale {
+  mm_per_pixel: number;
+  iris_diameter_px: number;
+}
+
+export interface ApiDebug {
+  pd_error_mm: number;
+  expected_accuracy: string;
+}
+
+export interface ApiLandmarks {
+  scale: ApiScale;
+  mm: ApiMeasurements;
+  face_shape: string;
+  debug: ApiDebug;
 }
 
 export interface RegionPoint {
@@ -105,16 +120,9 @@ export interface ApiRegionPoints {
   chin: RegionPoint;
 }
 
-export interface ApiScale {
-  mm_per_pixel: number;
-  pixels_per_mm: number;
-}
-
 export interface ApiLandmarksResponse {
-  mm: ApiMeasurements;
-  pixel?: ApiMeasurements;
-  scale?: ApiScale;
-  region_points?: ApiRegionPoints;
+  success: boolean;
+  landmarks: ApiLandmarks;
 }
 
 export interface CapturedData {
@@ -123,6 +131,7 @@ export interface CapturedData {
   glassesDetected: boolean;
   landmarks: FaceLandmarks;
   measurements: ApiMeasurements;
-  apiLandmarks?: ApiLandmarksResponse; // Full API response with region_points and scale
+  faceShape: string;
+  apiResponse?: ApiLandmarksResponse; // Full API response
   timestamp: number;
 }

@@ -13,46 +13,33 @@ export interface GlassesRemoveResponse {
 }
 
 export interface LandmarkMeasurements {
-  pd_total: number;
+  pd: number;
   pd_left: number;
   pd_right: number;
-  nose_left: number;
-  nose_right: number;
-  nose_total: number;
-  fitting_height: number;
+  nose_bridge_left: number;
+  nose_bridge_right: number;
   face_width: number;
   face_height: number;
-  face_shape_ratio: number;
-}
-
-export interface RegionPoint {
-  x: number;
-  y: number;
-}
-
-export interface RegionPoints {
-  left_eye_center: RegionPoint;
-  right_eye_center: RegionPoint;
-  left_eyebrow: RegionPoint;
-  right_eyebrow: RegionPoint;
-  nose_tip: RegionPoint;
-  left_ear: RegionPoint;
-  right_ear: RegionPoint;
-  chin: RegionPoint;
+  face_ratio: number;
 }
 
 export interface Scale {
   mm_per_pixel: number;
-  pixels_per_mm: number;
+  iris_diameter_px: number;
+}
+
+export interface DebugInfo {
+  pd_error_mm: number;
+  expected_accuracy: string;
 }
 
 export interface LandmarksDetectResponse {
   success: boolean;
   landmarks: {
+    scale: Scale;
     mm: LandmarkMeasurements;
-    pixel?: LandmarkMeasurements;
-    scale?: Scale;
-    region_points?: RegionPoints;
+    face_shape: string;
+    debug: DebugInfo;
   };
 }
 
