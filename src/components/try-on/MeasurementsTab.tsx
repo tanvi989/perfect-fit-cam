@@ -16,14 +16,21 @@ export function MeasurementsTab() {
 
   const { measurements, processedImageDataUrl, glassesDetected } = capturedData;
 
+  // Helper to safely format numbers
+  const formatMeasurement = (value: number | undefined, decimals: number = 1): string => {
+    if (value === undefined || value === null || isNaN(value)) return 'N/A';
+    return value.toFixed(decimals);
+  };
+
   // Calculate confidence based on PD value range (typical adult PD is 54-74mm)
-  const getConfidence = (pd: number): 'low' | 'medium' | 'high' => {
+  const getConfidence = (pd: number | undefined): 'low' | 'medium' | 'high' => {
+    if (pd === undefined || pd === null) return 'low';
     if (pd >= 54 && pd <= 74) return 'high';
     if (pd >= 48 && pd <= 80) return 'medium';
     return 'low';
   };
 
-  const confidence = getConfidence(measurements.pd_total);
+  const confidence = getConfidence(measurements?.pd_total);
 
   const getConfidenceBadge = (conf: 'low' | 'medium' | 'high') => {
     const variants = {
@@ -81,7 +88,7 @@ export function MeasurementsTab() {
         <CardContent>
           <div className="text-center py-4">
             <div className="text-5xl font-bold text-primary">
-              {measurements.pd_total.toFixed(1)}
+              {formatMeasurement(measurements?.pd_total)}
               <span className="text-2xl font-normal text-muted-foreground ml-1">mm</span>
             </div>
             <p className="text-sm text-muted-foreground mt-2">
@@ -93,13 +100,13 @@ export function MeasurementsTab() {
             <div className="text-center">
               <p className="text-sm text-muted-foreground">Left PD</p>
               <p className="text-2xl font-semibold text-foreground">
-                {measurements.pd_left.toFixed(1)} mm
+                {formatMeasurement(measurements?.pd_left)} mm
               </p>
             </div>
             <div className="text-center">
               <p className="text-sm text-muted-foreground">Right PD</p>
               <p className="text-2xl font-semibold text-foreground">
-                {measurements.pd_right.toFixed(1)} mm
+                {formatMeasurement(measurements?.pd_right)} mm
               </p>
             </div>
           </div>
@@ -119,19 +126,19 @@ export function MeasurementsTab() {
             <div className="bg-muted/50 rounded-lg p-4 text-center">
               <p className="text-sm text-muted-foreground">Face Width</p>
               <p className="text-xl font-semibold text-foreground">
-                {measurements.nose_total.toFixed(1)} mm
+                {formatMeasurement(measurements?.nose_total)} mm
               </p>
             </div>
             <div className="bg-muted/50 rounded-lg p-4 text-center">
               <p className="text-sm text-muted-foreground">Face Height</p>
               <p className="text-xl font-semibold text-foreground">
-                {measurements.face_height.toFixed(1)} mm
+                {formatMeasurement(measurements?.face_height)} mm
               </p>
             </div>
             <div className="bg-muted/50 rounded-lg p-4 text-center">
               <p className="text-sm text-muted-foreground">Face Ratio</p>
               <p className="text-xl font-semibold text-foreground">
-                {measurements.face_shape_ratio.toFixed(2)}
+                {formatMeasurement(measurements?.face_shape_ratio, 2)}
               </p>
             </div>
           </div>
@@ -151,13 +158,13 @@ export function MeasurementsTab() {
             <div className="bg-muted/50 rounded-lg p-4 text-center">
               <p className="text-sm text-muted-foreground">Left</p>
               <p className="text-xl font-semibold text-foreground">
-                {measurements.nose_left.toFixed(1)} mm
+                {formatMeasurement(measurements?.nose_left)} mm
               </p>
             </div>
             <div className="bg-muted/50 rounded-lg p-4 text-center">
               <p className="text-sm text-muted-foreground">Right</p>
               <p className="text-xl font-semibold text-foreground">
-                {measurements.nose_right.toFixed(1)} mm
+                {formatMeasurement(measurements?.nose_right)} mm
               </p>
             </div>
           </div>
