@@ -220,12 +220,12 @@ export function FramesTab() {
     if (!selectedFrame || !capturedData?.apiLandmarks) return null;
 
     const { apiLandmarks, measurements } = capturedData;
-    if (!apiLandmarks.region_points) return null;
+    if (!apiLandmarks?.region_points) return null;
 
     return computeFrameTransform(
       selectedFrame,
       apiLandmarks.region_points,
-      measurements.face_width
+      measurements?.face_width ?? 0
     );
   }, [selectedFrame, capturedData]);
 
@@ -376,10 +376,10 @@ export function FramesTab() {
         {/* Debug info */}
         {transform && (
           <div className="mt-2 text-xs text-muted-foreground font-mono">
-            Scale: {(transform.scaleFactor * adjustments.scaleAdjust).toFixed(3)} |
-            Angle: {(transform.angleRad * 180 / Math.PI).toFixed(1)}° |
-            Eye Distance: {transform.eyeDistancePx.toFixed(0)}px |
-            Position: ({transform.midX.toFixed(0)}, {transform.midY.toFixed(0)})
+            Scale: {((transform.scaleFactor ?? 0) * (adjustments?.scaleAdjust ?? 1)).toFixed(3)} |
+            Angle: {((transform.angleRad ?? 0) * 180 / Math.PI).toFixed(1)}° |
+            Eye Distance: {(transform.eyeDistancePx ?? 0).toFixed(0)}px |
+            Position: ({(transform.midX ?? 0).toFixed(0)}, {(transform.midY ?? 0).toFixed(0)})
           </div>
         )}
       </div>
@@ -398,7 +398,7 @@ export function FramesTab() {
         frames={FRAMES}
         selectedFrame={selectedFrame}
         onSelectFrame={handleFrameSelect}
-        faceWidthMm={capturedData.measurements.face_width}
+        faceWidthMm={capturedData?.measurements?.face_width ?? 0}
       />
     </div>
   );

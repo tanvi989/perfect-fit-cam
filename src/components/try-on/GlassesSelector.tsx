@@ -33,8 +33,8 @@ export function GlassesSelector({ frames, selectedFrame, onSelectFrame, faceWidt
           <Glasses className="w-4 h-4 text-primary" />
           <h3 className="text-sm font-semibold text-foreground">Select Frames</h3>
         </div>
-        {faceWidthMm && (
-          <span className="text-xs text-muted-foreground">Your face width: <span className="font-medium text-foreground">{faceWidthMm.toFixed(0)}mm</span></span>
+        {faceWidthMm != null && (
+          <span className="text-xs text-muted-foreground">Your face width: <span className="font-medium text-foreground">{faceWidthMm?.toFixed(0) ?? 'N/A'}mm</span></span>
         )}
       </div>
 

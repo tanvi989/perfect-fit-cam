@@ -83,41 +83,41 @@ export function FaceGuideOverlay({ isValid, faceDetected, validationChecks, debu
         <div className="absolute top-20 right-4 bg-black/80 backdrop-blur-md rounded-xl p-3 text-xs font-mono text-white space-y-1">
           <div className="text-yellow-400 font-bold mb-2">Debug Values</div>
           <div className={cn(
-            debugValues.faceWidthPercent >= 15 && debugValues.faceWidthPercent <= 70 
+            (debugValues?.faceWidthPercent ?? 0) >= 15 && (debugValues?.faceWidthPercent ?? 0) <= 70 
               ? "text-green-400" : "text-red-400"
           )}>
-            Distance: {debugValues.faceWidthPercent.toFixed(1)}% 
+            Distance: {debugValues?.faceWidthPercent?.toFixed(1) ?? 'N/A'}% 
             <span className="text-white/50 ml-1">(need 15-70%)</span>
           </div>
           <div className={cn(
-            debugValues.leftEyeAR > 0.01 ? "text-green-400" : "text-red-400"
+            (debugValues?.leftEyeAR ?? 0) > 0.01 ? "text-green-400" : "text-red-400"
           )}>
-            Left Eye AR: {debugValues.leftEyeAR.toFixed(3)}
+            Left Eye AR: {debugValues?.leftEyeAR?.toFixed(3) ?? 'N/A'}
             <span className="text-white/50 ml-1">(need &gt;0.01)</span>
           </div>
           <div className={cn(
-            debugValues.rightEyeAR > 0.01 ? "text-green-400" : "text-red-400"
+            (debugValues?.rightEyeAR ?? 0) > 0.01 ? "text-green-400" : "text-red-400"
           )}>
-            Right Eye AR: {debugValues.rightEyeAR.toFixed(3)}
+            Right Eye AR: {debugValues?.rightEyeAR?.toFixed(3) ?? 'N/A'}
             <span className="text-white/50 ml-1">(need &gt;0.01)</span>
           </div>
           <div className={cn(
-            Math.abs(debugValues.headTilt) <= 10 ? "text-green-400" : "text-red-400"
+            Math.abs(debugValues?.headTilt ?? 0) <= 10 ? "text-green-400" : "text-red-400"
           )}>
-            Head Tilt: {debugValues.headTilt.toFixed(1)}°
+            Head Tilt: {debugValues?.headTilt?.toFixed(1) ?? 'N/A'}°
             <span className="text-white/50 ml-1">(need ±10°)</span>
           </div>
           <div className={cn(
-            Math.abs(debugValues.headRotation) <= 15 ? "text-green-400" : "text-red-400"
+            Math.abs(debugValues?.headRotation ?? 0) <= 15 ? "text-green-400" : "text-red-400"
           )}>
-            Head Rotation: {debugValues.headRotation.toFixed(1)}°
+            Head Rotation: {debugValues?.headRotation?.toFixed(1) ?? 'N/A'}°
             <span className="text-white/50 ml-1">(need ±15°)</span>
           </div>
           <div className={cn(
-            debugValues.brightness >= 80 && debugValues.brightness <= 220 
+            (debugValues?.brightness ?? 0) >= 80 && (debugValues?.brightness ?? 0) <= 220 
               ? "text-green-400" : "text-red-400"
           )}>
-            Brightness: {debugValues.brightness.toFixed(0)}
+            Brightness: {debugValues?.brightness?.toFixed(0) ?? 'N/A'}
             <span className="text-white/50 ml-1">(need 80-220)</span>
           </div>
         </div>
