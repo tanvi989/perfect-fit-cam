@@ -14,7 +14,7 @@ export function MeasurementsTab() {
     );
   }
 
-  const { measurements, processedImageDataUrl, glassesDetected } = capturedData;
+  const { measurements, processedImageDataUrl, glassesDetected, faceShape } = capturedData;
 
   // Helper to safely format numbers
   const formatMeasurement = (value: number | undefined, decimals: number = 1): string => {
@@ -30,7 +30,7 @@ export function MeasurementsTab() {
     return 'low';
   };
 
-  const confidence = getConfidence(measurements?.pd_total);
+  const confidence = getConfidence(measurements?.pd);
 
   const getConfidenceBadge = (conf: 'low' | 'medium' | 'high') => {
     const variants = {
@@ -88,7 +88,7 @@ export function MeasurementsTab() {
         <CardContent>
           <div className="text-center py-4">
             <div className="text-5xl font-bold text-primary">
-              {formatMeasurement(measurements?.pd_total)}
+              {formatMeasurement(measurements?.pd)}
               <span className="text-2xl font-normal text-muted-foreground ml-1">mm</span>
             </div>
             <p className="text-sm text-muted-foreground mt-2">
@@ -122,11 +122,11 @@ export function MeasurementsTab() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-2 gap-4 mb-4">
             <div className="bg-muted/50 rounded-lg p-4 text-center">
               <p className="text-sm text-muted-foreground">Face Width</p>
               <p className="text-xl font-semibold text-foreground">
-                {formatMeasurement(measurements?.nose_total)} mm
+                {formatMeasurement(measurements?.face_width)} mm
               </p>
             </div>
             <div className="bg-muted/50 rounded-lg p-4 text-center">
@@ -135,10 +135,18 @@ export function MeasurementsTab() {
                 {formatMeasurement(measurements?.face_height)} mm
               </p>
             </div>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
             <div className="bg-muted/50 rounded-lg p-4 text-center">
               <p className="text-sm text-muted-foreground">Face Ratio</p>
               <p className="text-xl font-semibold text-foreground">
-                {formatMeasurement(measurements?.face_shape_ratio, 2)}
+                {formatMeasurement(measurements?.face_ratio, 2)}
+              </p>
+            </div>
+            <div className="bg-primary/10 rounded-lg p-4 text-center">
+              <p className="text-sm text-muted-foreground">Face Shape</p>
+              <p className="text-xl font-semibold text-primary capitalize">
+                {faceShape || 'N/A'}
               </p>
             </div>
           </div>
@@ -158,13 +166,13 @@ export function MeasurementsTab() {
             <div className="bg-muted/50 rounded-lg p-4 text-center">
               <p className="text-sm text-muted-foreground">Left</p>
               <p className="text-xl font-semibold text-foreground">
-                {formatMeasurement(measurements?.nose_left)} mm
+                {formatMeasurement(measurements?.nose_bridge_left)} mm
               </p>
             </div>
             <div className="bg-muted/50 rounded-lg p-4 text-center">
               <p className="text-sm text-muted-foreground">Right</p>
               <p className="text-xl font-semibold text-foreground">
-                {formatMeasurement(measurements?.nose_right)} mm
+                {formatMeasurement(measurements?.nose_bridge_right)} mm
               </p>
             </div>
           </div>

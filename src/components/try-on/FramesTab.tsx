@@ -2,11 +2,8 @@ import { useState, useMemo, useRef } from 'react';
 import { useCaptureData } from '@/context/CaptureContext';
 import { GlassesSelector } from './GlassesSelector';
 import { FrameAdjustmentControls } from './FrameAdjustmentControls';
-import { LandmarksDebugOverlay } from './LandmarksDebugOverlay';
-import { Glasses, AlertCircle, CheckCircle, Info, Eye } from 'lucide-react';
-import { Switch } from '@/components/ui/switch';
-import { Label } from '@/components/ui/label';
-import type { GlassesFrame, ApiScale, FrameOffsets } from '@/types/face-validation';
+import { Glasses, AlertCircle, CheckCircle, Info } from 'lucide-react';
+import type { GlassesFrame, FrameOffsets, FaceLandmarks } from '@/types/face-validation';
 import { cn } from '@/lib/utils';
 
 // Import frame images
@@ -88,22 +85,9 @@ const DEFAULT_ADJUSTMENTS: AdjustmentValues = {
 };
 
 /**
- * Calculate center point from array of [x, y] coordinates
- * As specified: average all points to get center
- */
-function getCenter(points: number[][]): { x: number; y: number } {
-  if (!points || points.length === 0) {
-    return { x: 0, y: 0 };
-  }
-  const x = points.reduce((s, p) => s + (p[0] || 0), 0) / points.length;
-  const y = points.reduce((s, p) => s + (p[1] || 0), 0) / points.length;
-  return { x, y };
-}
-
-/**
  * Professional frame overlay calculation using exact math:
  * 
- * 1. Calculate eye centers from landmarks
+ * 1. Calculate eye centers from local face landmarks
  * 2. Calculate angle = atan2(leftCenter.y - rightCenter.y, leftCenter.x - rightCenter.x)
  * 3. Calculate eye distance in pixels
  * 4. Calculate scale factor = eyeDistancePx / FRAME_PNG_INTERNAL_EYE_WIDTH
@@ -111,39 +95,37 @@ function getCenter(points: number[][]): { x: number; y: number } {
  */
 function computeFrameTransform(
   frame: GlassesFrame,
-  regionPoints: any,
-  faceWidthMm: number
+  landmarks: FaceLandmarks,
+  faceWidthMm: number,
+  imageScale: { scaleX: number; scaleY: number }
 ): FrameTransform | null {
-  // Extract landmark arrays for eyes
-  const leftEyePoints = regionPoints.left_eye;
-  const rightEyePoints = regionPoints.right_eye;
+  // Use eye center positions from local face detection, scaled to display size
+  const leftCenter = {
+    x: landmarks.leftEye.x * imageScale.scaleX,
+    y: landmarks.leftEye.y * imageScale.scaleY
+  };
+  const rightCenter = {
+    x: landmarks.rightEye.x * imageScale.scaleX,
+    y: landmarks.rightEye.y * imageScale.scaleY
+  };
 
-  if (!leftEyePoints?.length || !rightEyePoints?.length) {
-    console.warn('Missing eye landmarks');
-    return null;
-  }
-
-  // Step 1: Calculate eye centers by averaging landmark points
-  const leftCenter = getCenter(leftEyePoints);
-  const rightCenter = getCenter(rightEyePoints);
-
-  // Step 2: Calculate angle using atan2
+  // Calculate angle using atan2
   const angleRad = Math.atan2(
     leftCenter.y - rightCenter.y,
     leftCenter.x - rightCenter.x
   );
 
-  // Step 3: Calculate eye distance in pixels
+  // Calculate eye distance in pixels
   const eyeDistancePx = Math.sqrt(
     Math.pow(leftCenter.x - rightCenter.x, 2) +
     Math.pow(leftCenter.y - rightCenter.y, 2)
   );
 
-  // Step 4: Calculate scale factor
+  // Calculate scale factor
   const frameInternalWidth = FRAME_PNG_INTERNAL_EYE_WIDTH_PX[frame.id] || 200;
   const scaleFactor = eyeDistancePx / frameInternalWidth;
 
-  // Step 5: Position - midpoint between eyes
+  // Position - midpoint between eyes
   const midX = (leftCenter.x + rightCenter.x) / 2;
   const midY = (leftCenter.y + rightCenter.y) / 2;
 
@@ -193,7 +175,6 @@ export function FramesTab() {
   const [selectedFrame, setSelectedFrame] = useState<GlassesFrame | null>(null);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [adjustments, setAdjustments] = useState<AdjustmentValues>(DEFAULT_ADJUSTMENTS);
-  const [showDebugOverlay, setShowDebugOverlay] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
 
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
@@ -215,19 +196,25 @@ export function FramesTab() {
     setAdjustments(selectedFrame?.offsets || DEFAULT_ADJUSTMENTS);
   };
 
-  // Compute transform using eye-center based math
+  // Compute transform using eye-center based math from local face detection
   const transform = useMemo(() => {
-    if (!selectedFrame || !capturedData?.apiLandmarks) return null;
+    if (!selectedFrame || !capturedData?.landmarks || !imageRef.current) return null;
 
-    const { apiLandmarks, measurements } = capturedData;
-    if (!apiLandmarks?.region_points) return null;
+    const { landmarks, measurements } = capturedData;
+    
+    // Calculate image scale: display size vs natural size
+    const imageScale = {
+      scaleX: containerSize.width / (imageRef.current.naturalWidth || 1),
+      scaleY: containerSize.height / (imageRef.current.naturalHeight || 1)
+    };
 
     return computeFrameTransform(
       selectedFrame,
-      apiLandmarks.region_points,
-      measurements?.face_width ?? 0
+      landmarks,
+      measurements?.face_width ?? 0,
+      imageScale
     );
-  }, [selectedFrame, capturedData]);
+  }, [selectedFrame, capturedData, containerSize]);
 
   if (!capturedData) {
     return (
@@ -305,18 +292,6 @@ export function FramesTab() {
           </div>
 
           <div className="flex items-center gap-3">
-            {/* Debug overlay toggle */}
-            <div className="flex items-center gap-2">
-              <Switch
-                id="debug-overlay"
-                checked={showDebugOverlay}
-                onCheckedChange={setShowDebugOverlay}
-              />
-              <Label htmlFor="debug-overlay" className="text-xs text-muted-foreground cursor-pointer">
-                <Eye className="h-3 w-3 inline mr-1" />
-                Landmarks
-              </Label>
-            </div>
 
             {/* Fit badge */}
             {transform && fitInfo && (
@@ -338,16 +313,6 @@ export function FramesTab() {
             onLoad={handleImageLoad}
           />
 
-          {/* Landmarks debug overlay */}
-          {showDebugOverlay && capturedData.apiLandmarks && imageRef.current && (
-            <LandmarksDebugOverlay
-              landmarks={capturedData.apiLandmarks}
-              containerWidth={containerSize.width}
-              containerHeight={containerSize.height}
-              naturalWidth={imageRef.current.naturalWidth}
-              naturalHeight={imageRef.current.naturalHeight}
-            />
-          )}
 
           {/* Frame overlay with CSS transforms */}
           {selectedFrame && transform && (

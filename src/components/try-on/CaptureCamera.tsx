@@ -147,7 +147,8 @@ export function CaptureCamera() {
         glassesDetected,
         landmarks: faceValidationState.landmarks,
         measurements: measureResult.landmarks.mm,
-        apiLandmarks: measureResult.landmarks, // Store full response with region_points and scale
+        faceShape: measureResult.landmarks.face_shape,
+        apiResponse: measureResult,
         timestamp: Date.now(),
       });
 
