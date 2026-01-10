@@ -91,16 +91,6 @@ export function CaptureCamera() {
     };
   }, [videoRef, cameraState]);
 
-  // Download image function
-  const downloadImage = useCallback((dataUrl: string, filename: string) => {
-    const link = document.createElement('a');
-    link.href = dataUrl;
-    link.download = filename;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-  }, []);
-
   // Capture and process image
   const captureAndProcess = useCallback(async () => {
     const video = videoRef.current;
@@ -123,10 +113,7 @@ export function CaptureCamera() {
 
       const imageDataUrl = canvas.toDataURL('image/jpeg', 0.9);
 
-      // Download the captured image with credit card reference
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-      downloadImage(imageDataUrl, `face-capture-with-card-${timestamp}.jpg`);
-      speak('Image captured and downloaded');
+      speak('Image captured');
 
       // Step 1: Detect glasses
       setProcessingStep('Detecting glasses...');
@@ -172,7 +159,7 @@ export function CaptureCamera() {
       setCountdown(null);
       setIsProcessing(false);
     }
-  }, [videoRef, faceValidationState.landmarks, setCapturedData, navigate, downloadImage, speak]);
+  }, [videoRef, faceValidationState.landmarks, setCapturedData, navigate, speak]);
 
   // Auto-capture countdown when all checks pass
   useEffect(() => {
