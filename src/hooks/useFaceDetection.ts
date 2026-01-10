@@ -18,19 +18,24 @@ const LANDMARK_INDICES = {
   faceRight: 454,
 };
 
-// Target distance: ~45cm from camera
+// Target distance: ~43cm from camera
 // Average adult face width: ~14-15cm
-// At 45cm with typical webcam FOV (~60°), face should be ~17-23% of frame
+// At 43cm with typical webcam FOV (~60°), face should be ~18-24% of frame
 const THRESHOLDS = {
   maxHeadTilt: 10, // degrees
   maxHeadRotation: 15, // degrees
-  targetFaceWidthPercent: 20, // ideal face width % at 45cm
-  minFaceWidthPercent: 17, // too far - move closer
-  maxFaceWidthPercent: 23, // too close - move back
+  targetFaceWidthPercent: 21, // ideal face width % at 43cm
+  minFaceWidthPercent: 18, // too far - move closer
+  maxFaceWidthPercent: 24, // too close - move back
   minBrightness: 80,
   maxBrightness: 220,
   minContrast: 0.3,
   eyeAspectRatioThreshold: 0.01, // Very low threshold to easily pass
+  // Face-in-oval thresholds (normalized 0-1 coordinates)
+  ovalCenterX: 0.5,
+  ovalCenterY: 0.45, // Slightly above center
+  maxFaceOffsetX: 0.12, // Maximum horizontal offset from center
+  maxFaceOffsetY: 0.15, // Maximum vertical offset from center
 };
 
 interface UseFaceDetectionProps {
@@ -133,7 +138,26 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
     return { brightness, contrast };
   }, []);
 
-  const generateValidationChecks = useCallback((state: Omit<FaceValidationState, 'validationChecks' | 'allChecksPassed'>): ValidationCheck[] => {
+  // Calculate if face is within the oval guide
+  const calculateFaceInOval = useCallback((landmarks: FaceLandmarks | null): { inOval: boolean; offsetX: number; offsetY: number } => {
+    if (!landmarks) return { inOval: false, offsetX: 0, offsetY: 0 };
+    
+    // Calculate face center from landmarks
+    const faceCenterX = (landmarks.faceLeft.x + landmarks.faceRight.x) / 2;
+    const faceCenterY = (landmarks.forehead.y + landmarks.chin.y) / 2;
+    
+    // Calculate offset from oval center
+    const offsetX = faceCenterX - THRESHOLDS.ovalCenterX;
+    const offsetY = faceCenterY - THRESHOLDS.ovalCenterY;
+    
+    // Check if within acceptable range
+    const inOval = Math.abs(offsetX) <= THRESHOLDS.maxFaceOffsetX && 
+                   Math.abs(offsetY) <= THRESHOLDS.maxFaceOffsetY;
+    
+    return { inOval, offsetX, offsetY };
+  }, []);
+
+  const generateValidationChecks = useCallback((state: Omit<FaceValidationState, 'validationChecks' | 'allChecksPassed'> & { faceInOval?: boolean; faceOffsetX?: number; faceOffsetY?: number }): ValidationCheck[] => {
     const checks: ValidationCheck[] = [
       {
         id: 'face-detected',
@@ -145,6 +169,36 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
             ? 'Multiple faces detected' 
             : 'Face detected',
         severity: state.faceDetected && state.faceCount === 1 ? 'pass' : 'fail',
+      },
+      {
+        id: 'face-in-oval',
+        label: 'Face in Oval',
+        passed: state.faceInOval === true,
+        message: !state.faceDetected
+          ? 'Position face in oval'
+          : state.faceInOval
+            ? 'Face centered'
+            : (state.faceOffsetX || 0) > 0.05
+              ? 'Move left'
+              : (state.faceOffsetX || 0) < -0.05
+                ? 'Move right'
+                : (state.faceOffsetY || 0) > 0.05
+                  ? 'Move up'
+                  : 'Move down',
+        severity: state.faceInOval ? 'pass' : 'fail',
+      },
+      {
+        id: 'distance',
+        label: 'Distance (~43cm)',
+        passed: state.faceWidthPercent >= THRESHOLDS.minFaceWidthPercent && 
+                state.faceWidthPercent <= THRESHOLDS.maxFaceWidthPercent,
+        message: state.faceWidthPercent < THRESHOLDS.minFaceWidthPercent 
+          ? 'Move closer to camera' 
+          : state.faceWidthPercent > THRESHOLDS.maxFaceWidthPercent 
+            ? 'Move back from camera' 
+            : 'Perfect distance (~43cm)',
+        severity: state.faceWidthPercent >= THRESHOLDS.minFaceWidthPercent && 
+                  state.faceWidthPercent <= THRESHOLDS.maxFaceWidthPercent ? 'pass' : 'fail',
       },
       {
         id: 'head-straight',
@@ -244,6 +298,9 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
     const leftEyeOpen = leftEyeAR > THRESHOLDS.eyeAspectRatioThreshold;
     const rightEyeOpen = rightEyeAR > THRESHOLDS.eyeAspectRatioThreshold;
 
+    // Check if face is in oval
+    const { inOval, offsetX, offsetY } = calculateFaceInOval(landmarks);
+
     const newState = {
       faceDetected: true,
       faceCount,
@@ -257,6 +314,9 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
       leftEyeAR,
       rightEyeAR,
       landmarks,
+      faceInOval: inOval,
+      faceOffsetX: offsetX,
+      faceOffsetY: offsetY,
     };
 
     const checks = generateValidationChecks(newState);
