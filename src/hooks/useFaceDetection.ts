@@ -24,10 +24,9 @@ const LANDMARK_INDICES = {
 const getThresholds = (isMobile: boolean) => {
   const distance = isMobile
     ? {
-        // More permissive on mobile to avoid constantly telling users to move back
-        targetFaceWidthPercent: 24,
-        minFaceWidthPercent: 19,
-        maxFaceWidthPercent: 32,
+        targetFaceWidthPercent: 26,
+        minFaceWidthPercent: 20,
+        maxFaceWidthPercent: 38, // ✅ FIXED
       }
     : {
         targetFaceWidthPercent: 21,
@@ -36,20 +35,20 @@ const getThresholds = (isMobile: boolean) => {
       };
 
   return {
-    maxHeadTilt: 10, // degrees
-    maxHeadRotation: 15, // degrees
+    maxHeadTilt: 10,
+    maxHeadRotation: 15,
     ...distance,
     minBrightness: 80,
     maxBrightness: 220,
     minContrast: 0.3,
-    eyeAspectRatioThreshold: 0.01, // Very low threshold to easily pass
-    // Face-in-oval thresholds (normalized 0-1 coordinates)
+    eyeAspectRatioThreshold: 0.01,
     ovalCenterX: 0.5,
-    ovalCenterY: 0.45, // Slightly above center
-    maxFaceOffsetX: 0.12, // Maximum horizontal offset from center
-    maxFaceOffsetY: 0.15, // Maximum vertical offset from center
+    ovalCenterY: 0.45,
+    maxFaceOffsetX: 0.12,
+    maxFaceOffsetY: 0.15,
   };
 };
+
 
 interface UseFaceDetectionProps {
   videoRef: React.RefObject<HTMLVideoElement>;
