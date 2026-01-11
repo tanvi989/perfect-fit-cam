@@ -19,23 +19,36 @@ const LANDMARK_INDICES = {
 };
 
 // Target distance: ~43cm from camera
-// Average adult face width: ~14-15cm
-// At 43cm with typical webcam FOV (~60°), face should be ~18-24% of frame
-const THRESHOLDS = {
-  maxHeadTilt: 10, // degrees
-  maxHeadRotation: 15, // degrees
-  targetFaceWidthPercent: 21, // ideal face width % at 43cm
-  minFaceWidthPercent: 18, // too far - move closer
-  maxFaceWidthPercent: 24, // too close - move back
-  minBrightness: 80,
-  maxBrightness: 220,
-  minContrast: 0.3,
-  eyeAspectRatioThreshold: 0.01, // Very low threshold to easily pass
-  // Face-in-oval thresholds (normalized 0-1 coordinates)
-  ovalCenterX: 0.5,
-  ovalCenterY: 0.45, // Slightly above center
-  maxFaceOffsetX: 0.12, // Maximum horizontal offset from center
-  maxFaceOffsetY: 0.15, // Maximum vertical offset from center
+// Note: mobile front cameras often have a narrower FOV than webcams, so the same
+// real-world distance can look "closer" (larger face %) than on desktop.
+const getThresholds = (isMobile: boolean) => {
+  const distance = isMobile
+    ? {
+        // More permissive on mobile to avoid constantly telling users to move back
+        targetFaceWidthPercent: 24,
+        minFaceWidthPercent: 19,
+        maxFaceWidthPercent: 32,
+      }
+    : {
+        targetFaceWidthPercent: 21,
+        minFaceWidthPercent: 18,
+        maxFaceWidthPercent: 24,
+      };
+
+  return {
+    maxHeadTilt: 10, // degrees
+    maxHeadRotation: 15, // degrees
+    ...distance,
+    minBrightness: 80,
+    maxBrightness: 220,
+    minContrast: 0.3,
+    eyeAspectRatioThreshold: 0.01, // Very low threshold to easily pass
+    // Face-in-oval thresholds (normalized 0-1 coordinates)
+    ovalCenterX: 0.5,
+    ovalCenterY: 0.45, // Slightly above center
+    maxFaceOffsetX: 0.12, // Maximum horizontal offset from center
+    maxFaceOffsetY: 0.15, // Maximum vertical offset from center
+  };
 };
 
 interface UseFaceDetectionProps {
@@ -45,6 +58,16 @@ interface UseFaceDetectionProps {
 }
 
 export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetectionProps) {
+  const isMobile =
+    typeof window !== 'undefined' &&
+    window.matchMedia('(max-width: 767px)').matches;
+
+  const thresholdsRef = useRef(getThresholds(isMobile));
+  const thresholds = thresholdsRef.current;
+
+  // Smooth the face width signal a bit to reduce jitter (especially on mobile)
+  const smoothedFaceWidthPercentRef = useRef<number | null>(null);
+
   const [validationState, setValidationState] = useState<FaceValidationState>({
     faceDetected: false,
     faceCount: 0,
@@ -117,45 +140,45 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
     canvas.width = 100;
     canvas.height = 100;
     ctx.drawImage(video, 0, 0, 100, 100);
-    
+
     const imageData = ctx.getImageData(0, 0, 100, 100);
     const data = imageData.data;
-    
+
     let sum = 0;
     let min = 255;
     let max = 0;
-    
+
     for (let i = 0; i < data.length; i += 4) {
       const gray = (data[i] + data[i + 1] + data[i + 2]) / 3;
       sum += gray;
       min = Math.min(min, gray);
       max = Math.max(max, gray);
     }
-    
+
     const brightness = sum / (data.length / 4);
     const contrast = (max - min) / 255;
-    
+
     return { brightness, contrast };
   }, []);
 
   // Calculate if face is within the oval guide
   const calculateFaceInOval = useCallback((landmarks: FaceLandmarks | null): { inOval: boolean; offsetX: number; offsetY: number } => {
     if (!landmarks) return { inOval: false, offsetX: 0, offsetY: 0 };
-    
+
     // Calculate face center from landmarks
     const faceCenterX = (landmarks.faceLeft.x + landmarks.faceRight.x) / 2;
     const faceCenterY = (landmarks.forehead.y + landmarks.chin.y) / 2;
-    
+
     // Calculate offset from oval center
-    const offsetX = faceCenterX - THRESHOLDS.ovalCenterX;
-    const offsetY = faceCenterY - THRESHOLDS.ovalCenterY;
-    
+    const offsetX = faceCenterX - thresholds.ovalCenterX;
+    const offsetY = faceCenterY - thresholds.ovalCenterY;
+
     // Check if within acceptable range
-    const inOval = Math.abs(offsetX) <= THRESHOLDS.maxFaceOffsetX && 
-                   Math.abs(offsetY) <= THRESHOLDS.maxFaceOffsetY;
-    
+    const inOval = Math.abs(offsetX) <= thresholds.maxFaceOffsetX &&
+                   Math.abs(offsetY) <= thresholds.maxFaceOffsetY;
+
     return { inOval, offsetX, offsetY };
-  }, []);
+  }, [thresholds.maxFaceOffsetX, thresholds.maxFaceOffsetY, thresholds.ovalCenterX, thresholds.ovalCenterY]);
 
   const generateValidationChecks = useCallback((state: Omit<FaceValidationState, 'validationChecks' | 'allChecksPassed'> & { faceInOval?: boolean; faceOffsetX?: number; faceOffsetY?: number }): ValidationCheck[] => {
     const checks: ValidationCheck[] = [
@@ -163,10 +186,10 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
         id: 'face-detected',
         label: 'Face Detection',
         passed: state.faceDetected && state.faceCount === 1,
-        message: !state.faceDetected 
-          ? 'No face detected' 
-          : state.faceCount > 1 
-            ? 'Multiple faces detected' 
+        message: !state.faceDetected
+          ? 'No face detected'
+          : state.faceCount > 1
+            ? 'Multiple faces detected'
             : 'Face detected',
         severity: state.faceDetected && state.faceCount === 1 ? 'pass' : 'fail',
       },
@@ -190,68 +213,76 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
       {
         id: 'distance',
         label: 'Distance (~43cm)',
-        passed: state.faceWidthPercent >= THRESHOLDS.minFaceWidthPercent && 
-                state.faceWidthPercent <= THRESHOLDS.maxFaceWidthPercent,
-        message: state.faceWidthPercent < THRESHOLDS.minFaceWidthPercent 
-          ? 'Move closer to camera' 
-          : state.faceWidthPercent > THRESHOLDS.maxFaceWidthPercent 
-            ? 'Move back from camera' 
+        passed: state.faceWidthPercent >= thresholds.minFaceWidthPercent &&
+                state.faceWidthPercent <= thresholds.maxFaceWidthPercent,
+        message: state.faceWidthPercent < thresholds.minFaceWidthPercent
+          ? 'Move closer to camera'
+          : state.faceWidthPercent > thresholds.maxFaceWidthPercent
+            ? 'Move back from camera'
             : 'Perfect distance (~43cm)',
-        severity: state.faceWidthPercent >= THRESHOLDS.minFaceWidthPercent && 
-                  state.faceWidthPercent <= THRESHOLDS.maxFaceWidthPercent ? 'pass' : 'fail',
+        severity: state.faceWidthPercent >= thresholds.minFaceWidthPercent &&
+                  state.faceWidthPercent <= thresholds.maxFaceWidthPercent ? 'pass' : 'fail',
       },
       {
         id: 'head-straight',
         label: 'Head Position',
-        passed: Math.abs(state.headTilt) <= THRESHOLDS.maxHeadTilt,
-        message: Math.abs(state.headTilt) <= THRESHOLDS.maxHeadTilt 
-          ? 'Head is straight' 
-          : state.headTilt > 0 
-            ? 'Tilt head left' 
+        passed: Math.abs(state.headTilt) <= thresholds.maxHeadTilt,
+        message: Math.abs(state.headTilt) <= thresholds.maxHeadTilt
+          ? 'Head is straight'
+          : state.headTilt > 0
+            ? 'Tilt head left'
             : 'Tilt head right',
-        severity: Math.abs(state.headTilt) <= THRESHOLDS.maxHeadTilt ? 'pass' : 'fail',
+        severity: Math.abs(state.headTilt) <= thresholds.maxHeadTilt ? 'pass' : 'fail',
       },
       {
         id: 'no-rotation',
         label: 'Face Forward',
-        passed: Math.abs(state.headRotation) <= THRESHOLDS.maxHeadRotation,
-        message: Math.abs(state.headRotation) <= THRESHOLDS.maxHeadRotation 
-          ? 'Facing forward' 
-          : state.headRotation > 0 
-            ? 'Turn head left' 
+        passed: Math.abs(state.headRotation) <= thresholds.maxHeadRotation,
+        message: Math.abs(state.headRotation) <= thresholds.maxHeadRotation
+          ? 'Facing forward'
+          : state.headRotation > 0
+            ? 'Turn head left'
             : 'Turn head right',
-        severity: Math.abs(state.headRotation) <= THRESHOLDS.maxHeadRotation ? 'pass' : 'fail',
+        severity: Math.abs(state.headRotation) <= thresholds.maxHeadRotation ? 'pass' : 'fail',
       },
       {
         id: 'lighting',
         label: 'Lighting',
-        passed: state.brightness >= THRESHOLDS.minBrightness && 
-                state.brightness <= THRESHOLDS.maxBrightness &&
-                state.contrast >= THRESHOLDS.minContrast,
-        message: state.brightness < THRESHOLDS.minBrightness 
-          ? 'Too dark - add light' 
-          : state.brightness > THRESHOLDS.maxBrightness 
-            ? 'Too bright' 
-            : state.contrast < THRESHOLDS.minContrast 
-              ? 'Reduce shadows' 
+        passed: state.brightness >= thresholds.minBrightness &&
+                state.brightness <= thresholds.maxBrightness &&
+                state.contrast >= thresholds.minContrast,
+        message: state.brightness < thresholds.minBrightness
+          ? 'Too dark - add light'
+          : state.brightness > thresholds.maxBrightness
+            ? 'Too bright'
+            : state.contrast < thresholds.minContrast
+              ? 'Reduce shadows'
               : 'Good lighting',
-        severity: state.brightness >= THRESHOLDS.minBrightness && 
-                  state.brightness <= THRESHOLDS.maxBrightness &&
-                  state.contrast >= THRESHOLDS.minContrast ? 'pass' : 'fail',
+        severity: state.brightness >= thresholds.minBrightness &&
+                  state.brightness <= thresholds.maxBrightness &&
+                  state.contrast >= thresholds.minContrast ? 'pass' : 'fail',
       },
       {
         id: 'eyes-open',
         label: 'Eyes Visible',
         passed: state.leftEyeOpen && state.rightEyeOpen,
-        message: state.leftEyeOpen && state.rightEyeOpen 
-          ? 'Eyes open' 
+        message: state.leftEyeOpen && state.rightEyeOpen
+          ? 'Eyes open'
           : 'Keep eyes open',
         severity: state.leftEyeOpen && state.rightEyeOpen ? 'pass' : 'fail',
       },
     ];
-    
+
     return checks;
-  }, []);
+  }, [
+    thresholds.maxBrightness,
+    thresholds.maxFaceWidthPercent,
+    thresholds.maxHeadRotation,
+    thresholds.maxHeadTilt,
+    thresholds.minBrightness,
+    thresholds.minContrast,
+    thresholds.minFaceWidthPercent,
+  ]);
 
   const processResults = useCallback((results: any) => {
     if (!videoRef.current || !canvasRef.current) return;
@@ -261,6 +292,8 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
     const { brightness, contrast } = analyzeImageQuality(video, canvas);
 
     if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
+      smoothedFaceWidthPercentRef.current = null;
+
       const newState = {
         faceDetected: false,
         faceCount: 0,
@@ -275,7 +308,7 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
         rightEyeAR: 0,
         landmarks: null,
       };
-      
+
       const checks = generateValidationChecks(newState);
       setValidationState({
         ...newState,
@@ -287,16 +320,26 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
 
     const faceCount = results.multiFaceLandmarks.length;
     const landmarks = extractLandmarks(results.multiFaceLandmarks[0]);
-    
+
     const headTilt = calculateHeadTilt(landmarks);
     const headRotation = calculateHeadRotation(landmarks);
-    const faceWidthPercent = calculateFaceWidthPercent(landmarks, video.videoWidth);
-    
+
+    let rawFaceWidthPercent = calculateFaceWidthPercent(landmarks, video.videoWidth);
+    rawFaceWidthPercent = Number.isFinite(rawFaceWidthPercent)
+      ? Math.min(100, Math.max(0, rawFaceWidthPercent))
+      : 0;
+
+    const prev = smoothedFaceWidthPercentRef.current;
+    const faceWidthPercent = prev == null
+      ? rawFaceWidthPercent
+      : prev * 0.8 + rawFaceWidthPercent * 0.2;
+    smoothedFaceWidthPercentRef.current = faceWidthPercent;
+
     const leftEyeAR = calculateEyeAspectRatio(landmarks.leftEyeUpper, landmarks.leftEyeLower);
     const rightEyeAR = calculateEyeAspectRatio(landmarks.rightEyeUpper, landmarks.rightEyeLower);
-    
-    const leftEyeOpen = leftEyeAR > THRESHOLDS.eyeAspectRatioThreshold;
-    const rightEyeOpen = rightEyeAR > THRESHOLDS.eyeAspectRatioThreshold;
+
+    const leftEyeOpen = leftEyeAR > thresholds.eyeAspectRatioThreshold;
+    const rightEyeOpen = rightEyeAR > thresholds.eyeAspectRatioThreshold;
 
     // Check if face is in oval
     const { inOval, offsetX, offsetY } = calculateFaceInOval(landmarks);
@@ -327,7 +370,19 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
       validationChecks: checks,
       allChecksPassed,
     });
-  }, [videoRef, canvasRef, analyzeImageQuality, extractLandmarks, calculateHeadTilt, calculateHeadRotation, calculateFaceWidthPercent, calculateEyeAspectRatio, generateValidationChecks]);
+  }, [
+    videoRef,
+    canvasRef,
+    analyzeImageQuality,
+    extractLandmarks,
+    calculateHeadTilt,
+    calculateHeadRotation,
+    calculateFaceWidthPercent,
+    calculateEyeAspectRatio,
+    generateValidationChecks,
+    thresholds.eyeAspectRatioThreshold,
+    calculateFaceInOval,
+  ]);
 
   useEffect(() => {
     if (!isActive) return;
@@ -355,12 +410,12 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
         };
 
         await loadScript('https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js');
-        
+
         if (!isMounted) return;
 
         // Access FaceMesh from window object
         const FaceMeshClass = (window as any).FaceMesh;
-        
+
         if (!FaceMeshClass) {
           console.error('FaceMesh class not found on window');
           return;
@@ -384,7 +439,7 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
 
         const processFrame = async () => {
           if (!isMounted || !videoRef.current || !faceMeshRef.current) return;
-          
+
           const now = performance.now();
           if (now - lastProcessTime.current < 100) { // Limit to ~10 FPS for performance
             animationFrameRef.current = requestAnimationFrame(processFrame);
@@ -395,11 +450,11 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
           if (videoRef.current.readyState >= 2) {
             try {
               await faceMeshRef.current.send({ image: videoRef.current });
-            } catch (e) {
+            } catch {
               // Ignore errors if instance was closed
             }
           }
-          
+
           if (isMounted) {
             animationFrameRef.current = requestAnimationFrame(processFrame);
           }
@@ -415,17 +470,17 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
 
     return () => {
       isMounted = false;
-      
+
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
         animationFrameRef.current = undefined;
       }
-      
+
       // Safely close FaceMesh instance
       if (localFaceMesh) {
         try {
           localFaceMesh.close();
-        } catch (e) {
+        } catch {
           // Instance may already be deleted, ignore error
         }
         localFaceMesh = null;
