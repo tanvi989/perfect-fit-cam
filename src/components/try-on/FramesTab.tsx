@@ -93,20 +93,44 @@ const DEFAULT_ADJUSTMENTS: AdjustmentValues = {
  * 4. Calculate scale factor = eyeDistancePx / FRAME_PNG_INTERNAL_EYE_WIDTH
  * 5. Position at midpoint between eyes, slightly above for natural fit
  */
+/**
+ * Compute frame overlay transform.
+ * 
+ * Local landmarks are normalized 0-1 (MediaPipe), so we first convert them
+ * to pixel positions in the natural image size, then scale to container size.
+ */
 function computeFrameTransform(
   frame: GlassesFrame,
   landmarks: FaceLandmarks,
   faceWidthMm: number,
-  imageScale: { scaleX: number; scaleY: number }
+  containerSize: { width: number; height: number },
+  naturalSize: { width: number; height: number }
 ): FrameTransform | null {
-  // Use eye center positions from local face detection, scaled to display size
+  if (naturalSize.width === 0 || naturalSize.height === 0) return null;
+
+  // Landmarks are 0-1 normalized. Convert to natural image pixels first.
+  const leftEyeNatural = {
+    x: landmarks.leftEye.x * naturalSize.width,
+    y: landmarks.leftEye.y * naturalSize.height,
+  };
+  const rightEyeNatural = {
+    x: landmarks.rightEye.x * naturalSize.width,
+    y: landmarks.rightEye.y * naturalSize.height,
+  };
+
+  // Scale from natural to displayed container size
+  const displayScale = {
+    x: containerSize.width / naturalSize.width,
+    y: containerSize.height / naturalSize.height,
+  };
+
   const leftCenter = {
-    x: landmarks.leftEye.x * imageScale.scaleX,
-    y: landmarks.leftEye.y * imageScale.scaleY
+    x: leftEyeNatural.x * displayScale.x,
+    y: leftEyeNatural.y * displayScale.y,
   };
   const rightCenter = {
-    x: landmarks.rightEye.x * imageScale.scaleX,
-    y: landmarks.rightEye.y * imageScale.scaleY
+    x: rightEyeNatural.x * displayScale.x,
+    y: rightEyeNatural.y * displayScale.y,
   };
 
   // Calculate angle using atan2
@@ -115,13 +139,14 @@ function computeFrameTransform(
     leftCenter.x - rightCenter.x
   );
 
-  // Calculate eye distance in pixels
+  // Calculate eye distance in displayed pixels
   const eyeDistancePx = Math.sqrt(
     Math.pow(leftCenter.x - rightCenter.x, 2) +
     Math.pow(leftCenter.y - rightCenter.y, 2)
   );
 
-  // Calculate scale factor
+  // Calculate scale factor: how much to scale frame PNG so its internal
+  // eye width matches the detected eye distance in pixels
   const frameInternalWidth = FRAME_PNG_INTERNAL_EYE_WIDTH_PX[frame.id] || 200;
   const scaleFactor = eyeDistancePx / frameInternalWidth;
 
@@ -130,7 +155,7 @@ function computeFrameTransform(
   const midY = (leftCenter.y + rightCenter.y) / 2;
 
   // Adjust Y slightly above eye center for natural nose bridge placement
-  const frameY = midY - (0.10 * eyeDistancePx);
+  const frameY = midY - (0.08 * eyeDistancePx);
 
   // Fit classification based on frame width vs face width
   const diff = frame.width - faceWidthMm;
@@ -201,18 +226,19 @@ export function FramesTab() {
     if (!selectedFrame || !capturedData?.landmarks || !imageRef.current) return null;
 
     const { landmarks, measurements } = capturedData;
+    const img = imageRef.current;
     
-    // Calculate image scale: display size vs natural size
-    const imageScale = {
-      scaleX: containerSize.width / (imageRef.current.naturalWidth || 1),
-      scaleY: containerSize.height / (imageRef.current.naturalHeight || 1)
+    const naturalSize = {
+      width: img.naturalWidth || 1,
+      height: img.naturalHeight || 1,
     };
 
     return computeFrameTransform(
       selectedFrame,
       landmarks,
       measurements?.face_width ?? 0,
-      imageScale
+      containerSize,
+      naturalSize
     );
   }, [selectedFrame, capturedData, containerSize]);
 
@@ -245,24 +271,13 @@ export function FramesTab() {
       return { display: 'none' };
     }
 
-    const img = imageRef.current;
-    if (!img) return { display: 'none' };
+    // Transform already has midX/midY in container (display) coordinates
+    const displayX = transform.midX + adjustments.offsetX;
+    const displayY = transform.midY + adjustments.offsetY;
 
-    const naturalWidth = img.naturalWidth;
-    const naturalHeight = img.naturalHeight;
+    // Apply scale factor with user adjustment
+    const finalScale = transform.scaleFactor * adjustments.scaleAdjust;
 
-    // Scale ratios from natural to displayed size
-    const scaleX = containerSize.width / naturalWidth;
-    const scaleY = containerSize.height / naturalHeight;
-    const displayScaleRatio = Math.min(scaleX, scaleY);
-
-    // Convert midpoint to display coordinates with adjustments
-    const displayX = transform.midX * scaleX + adjustments.offsetX;
-    const displayY = transform.midY * scaleY + adjustments.offsetY;
-
-    // Apply scale factor with display ratio and user adjustment
-    const finalScale = transform.scaleFactor * displayScaleRatio * adjustments.scaleAdjust;
-    
     // Apply rotation (head tilt angle) with user adjustment
     const finalRotation = transform.angleRad + (adjustments.rotationAdjust * Math.PI / 180);
 
