@@ -154,8 +154,9 @@ function computeFrameTransform(
   const midX = (leftCenter.x + rightCenter.x) / 2;
   const midY = (leftCenter.y + rightCenter.y) / 2;
 
-  // Adjust Y slightly above eye center for natural nose bridge placement
-  const frameY = midY - (0.08 * eyeDistancePx);
+  // Adjust Y slightly below eye center for natural nose bridge placement
+  // Positive offset moves frames down toward the nose bridge
+  const frameY = midY + (0.15 * eyeDistancePx);
 
   // Fit classification based on frame width vs face width
   const diff = frame.width - faceWidthMm;
