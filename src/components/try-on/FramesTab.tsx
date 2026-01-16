@@ -278,8 +278,8 @@ export function FramesTab() {
     // Apply scale factor with user adjustment
     const finalScale = transform.scaleFactor * adjustments.scaleAdjust;
 
-    // Apply rotation (head tilt angle) with user adjustment
-    const finalRotation = transform.angleRad + (adjustments.rotationAdjust * Math.PI / 180);
+    // Apply rotation (head tilt angle) with user adjustment + 180 degree base rotation
+    const finalRotation = transform.angleRad + Math.PI + (adjustments.rotationAdjust * Math.PI / 180);
 
     return {
       position: 'absolute',
