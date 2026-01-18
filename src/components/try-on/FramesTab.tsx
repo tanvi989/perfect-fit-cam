@@ -107,6 +107,7 @@ function computeFrameTransform(
   naturalSize: { width: number; height: number }
 ): FrameTransform | null {
   if (naturalSize.width === 0 || naturalSize.height === 0) return null;
+  if (containerSize.width === 0 || containerSize.height === 0) return null;
 
   // Landmarks are 0-1 normalized. Convert to natural image pixels first.
   const leftEyeNatural = {
@@ -133,30 +134,27 @@ function computeFrameTransform(
     y: rightEyeNatural.y * displayScale.y,
   };
 
-  // Calculate angle using atan2
-  const angleRad = Math.atan2(
-    leftCenter.y - rightCenter.y,
-    leftCenter.x - rightCenter.x
-  );
+  // Calculate angle: right eye to left eye direction for correct frame orientation
+  // In MediaPipe, left eye appears on the RIGHT side of image (mirrored view)
+  const dx = rightCenter.x - leftCenter.x;
+  const dy = rightCenter.y - leftCenter.y;
+  const angleRad = Math.atan2(dy, dx);
 
   // Calculate eye distance in displayed pixels
-  const eyeDistancePx = Math.sqrt(
-    Math.pow(leftCenter.x - rightCenter.x, 2) +
-    Math.pow(leftCenter.y - rightCenter.y, 2)
-  );
+  const eyeDistancePx = Math.sqrt(dx * dx + dy * dy);
 
   // Calculate scale factor: how much to scale frame PNG so its internal
   // eye width matches the detected eye distance in pixels
   const frameInternalWidth = FRAME_PNG_INTERNAL_EYE_WIDTH_PX[frame.id] || 200;
-  const scaleFactor = eyeDistancePx / frameInternalWidth;
+  // Scale up by 2.5x to account for full frame width vs just eye centers
+  const scaleFactor = (eyeDistancePx / frameInternalWidth) * 2.5;
 
   // Position - midpoint between eyes
   const midX = (leftCenter.x + rightCenter.x) / 2;
   const midY = (leftCenter.y + rightCenter.y) / 2;
 
   // Adjust Y slightly below eye center for natural nose bridge placement
-  // Positive offset moves frames down toward the nose bridge
-  const frameY = midY + (0.15 * eyeDistancePx);
+  const frameY = midY + (eyeDistancePx * 0.1);
 
   // Fit classification based on frame width vs face width
   const diff = frame.width - faceWidthMm;
@@ -279,8 +277,8 @@ export function FramesTab() {
     // Apply scale factor with user adjustment
     const finalScale = transform.scaleFactor * adjustments.scaleAdjust;
 
-    // Apply rotation (head tilt angle) with user adjustment + 180 degree base rotation
-    const finalRotation = transform.angleRad + Math.PI + (adjustments.rotationAdjust * Math.PI / 180);
+    // Apply rotation (head tilt angle) with user adjustment - no 180deg flip needed now
+    const finalRotation = transform.angleRad + (adjustments.rotationAdjust * Math.PI / 180);
 
     return {
       position: 'absolute',
