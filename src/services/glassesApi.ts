@@ -64,6 +64,8 @@ export interface LandmarksDetectResponse {
 export interface SelectFrameResponse {
   success: boolean;
   message?: string;
+  frame_image?: string;
+  fitting_height?: number;
 }
 
 async function dataURLtoBlob(dataUrl: string): Promise<Blob> {
