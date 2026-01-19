@@ -152,7 +152,14 @@ function computeFrameTransform(
   // Calculate angle: right eye to left eye direction for correct frame orientation
   const dx = rightCenter.x - leftCenter.x;
   const dy = rightCenter.y - leftCenter.y;
-  const angleRad = Math.atan2(dy, dx);
+  let angleRad = Math.atan2(dy, dx);
+  
+  // Apply threshold: only rotate if head tilt is significant (> 3 degrees)
+  // This prevents minor landmark detection noise from causing unwanted tilt
+  const angleDeg = Math.abs(angleRad * 180 / Math.PI);
+  if (angleDeg < 3) {
+    angleRad = 0;
+  }
 
   // Calculate eye distance in displayed pixels
   const eyeDistancePx = Math.sqrt(dx * dx + dy * dy);
