@@ -1,5 +1,23 @@
 const API_BASE = 'https://api.multifolks.aonetech.in';
 
+// Session management - simple incrementing IDs stored in sessionStorage
+function getSessionIds(): { guestId: string; sessionId: string } {
+  let guestId = sessionStorage.getItem('guest_id');
+  let sessionId = sessionStorage.getItem('session_id');
+  
+  if (!guestId) {
+    guestId = String(Date.now());
+    sessionStorage.setItem('guest_id', guestId);
+  }
+  
+  if (!sessionId) {
+    sessionId = String(Date.now());
+    sessionStorage.setItem('session_id', sessionId);
+  }
+  
+  return { guestId, sessionId };
+}
+
 export interface GlassesDetectResponse {
   success: boolean;
   glasses_detected: boolean;
@@ -43,6 +61,11 @@ export interface LandmarksDetectResponse {
   };
 }
 
+export interface SelectFrameResponse {
+  success: boolean;
+  message?: string;
+}
+
 async function dataURLtoBlob(dataUrl: string): Promise<Blob> {
   const res = await fetch(dataUrl);
   return res.blob();
@@ -50,11 +73,12 @@ async function dataURLtoBlob(dataUrl: string): Promise<Blob> {
 
 export async function detectGlasses(imageDataUrl: string): Promise<GlassesDetectResponse> {
   try {
+    const { guestId, sessionId } = getSessionIds();
     const blob = await dataURLtoBlob(imageDataUrl);
     const formData = new FormData();
     formData.append('file', blob, 'capture.jpg');
 
-    const response = await fetch(`${API_BASE}/glasses/detect`, {
+    const response = await fetch(`${API_BASE}/glasses/detect?guest_id=${guestId}&session_id=${sessionId}`, {
       method: 'POST',
       headers: { 'accept': 'application/json' },
       body: formData,
@@ -74,11 +98,12 @@ export async function detectGlasses(imageDataUrl: string): Promise<GlassesDetect
 
 export async function removeGlasses(imageDataUrl: string): Promise<GlassesRemoveResponse> {
   try {
+    const { guestId, sessionId } = getSessionIds();
     const blob = await dataURLtoBlob(imageDataUrl);
     const formData = new FormData();
     formData.append('image', blob, 'capture.jpg');
 
-    const response = await fetch(`${API_BASE}/glasses/remove`, {
+    const response = await fetch(`${API_BASE}/glasses/remove?guest_id=${guestId}&session_id=${sessionId}`, {
       method: 'POST',
       body: formData,
     });
@@ -117,11 +142,12 @@ export async function removeGlasses(imageDataUrl: string): Promise<GlassesRemove
 
 export async function detectLandmarks(imageDataUrl: string): Promise<LandmarksDetectResponse> {
   try {
+    const { guestId, sessionId } = getSessionIds();
     const blob = await dataURLtoBlob(imageDataUrl);
     const formData = new FormData();
     formData.append('file', blob, 'capture.jpg');
 
-    const response = await fetch(`${API_BASE}/landmarks/detect`, {
+    const response = await fetch(`${API_BASE}/landmarks/detect?guest_id=${guestId}&session_id=${sessionId}`, {
       method: 'POST',
       headers: { 'accept': 'application/json' },
       body: formData,
@@ -135,5 +161,39 @@ export async function detectLandmarks(imageDataUrl: string): Promise<LandmarksDe
   } catch (error) {
     console.error('Landmarks detection API error:', error);
     throw new Error('CORS error: The API server needs to allow requests from this domain. Please configure CORS on your backend.');
+  }
+}
+
+export async function selectFrame(
+  frameImageDataUrl: string,
+  frameId: string,
+  frameName: string,
+  dimensions: string
+): Promise<SelectFrameResponse> {
+  try {
+    const { guestId, sessionId } = getSessionIds();
+    const blob = await dataURLtoBlob(frameImageDataUrl);
+    const formData = new FormData();
+    formData.append('guest_id', guestId);
+    formData.append('session_id', sessionId);
+    formData.append('frame_id', frameId);
+    formData.append('frame_name', frameName);
+    formData.append('dimensions', dimensions);
+    formData.append('selected_frame_image', blob, 'frame_selection.jpg');
+
+    const response = await fetch(`${API_BASE}/virtual-tryon/select-frame`, {
+      method: 'POST',
+      headers: { 'accept': 'application/json' },
+      body: formData,
+    });
+
+    if (!response.ok) {
+      throw new Error(`Failed to save frame selection: ${response.status}`);
+    }
+
+    return response.json();
+  } catch (error) {
+    console.error('Select frame API error:', error);
+    throw new Error('Failed to save frame selection');
   }
 }
