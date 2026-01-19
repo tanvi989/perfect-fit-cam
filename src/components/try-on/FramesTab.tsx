@@ -227,6 +227,7 @@ export function FramesTab() {
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [adjustments, setAdjustments] = useState<AdjustmentValues>(DEFAULT_ADJUSTMENTS);
   const [isSaving, setIsSaving] = useState(false);
+  const [fittingHeight, setFittingHeight] = useState<number | null>(null);
   const imageRef = useRef<HTMLImageElement>(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
 
@@ -317,12 +318,17 @@ export function FramesTab() {
       const dimensions = `${selectedFrame.lensWidth}-${selectedFrame.noseBridge}-${selectedFrame.templeLength}-${selectedFrame.width}`;
 
       // Call API
-      await selectFrame(
+      const response = await selectFrame(
         compositeImageUrl,
         selectedFrame.id,
         selectedFrame.name,
         dimensions
       );
+
+      // Store fitting height from response
+      if (response.fitting_height) {
+        setFittingHeight(response.fitting_height);
+      }
 
       toast.success('Frame selection saved successfully!');
     } catch (error) {
@@ -482,7 +488,16 @@ export function FramesTab() {
           </div>
         )}
 
-        {/* Debug info */}
+        {/* Fitting Height Display */}
+        {fittingHeight !== null && (
+          <div className="mt-3 p-3 bg-primary/10 rounded-lg border border-primary/20">
+            <div className="flex items-center gap-2">
+              <CheckCircle className="h-5 w-5 text-primary" />
+              <span className="font-medium text-foreground">Fitting Height:</span>
+              <span className="text-lg font-bold text-primary">{fittingHeight.toFixed(2)} mm</span>
+            </div>
+          </div>
+        )}
         {transform && (
           <div className="mt-2 text-xs text-muted-foreground font-mono">
             Scale: {((transform.scaleFactor ?? 0) * (adjustments?.scaleAdjust ?? 1)).toFixed(3)} |
