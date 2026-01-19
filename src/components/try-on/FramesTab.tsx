@@ -1,10 +1,13 @@
-import { useState, useMemo, useRef } from 'react';
+import { useState, useMemo, useRef, useCallback } from 'react';
 import { useCaptureData } from '@/context/CaptureContext';
 import { GlassesSelector } from './GlassesSelector';
 import { FrameAdjustmentControls } from './FrameAdjustmentControls';
-import { Glasses, AlertCircle, CheckCircle, Info } from 'lucide-react';
+import { Glasses, AlertCircle, CheckCircle, Info, Save, Loader2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import type { GlassesFrame, FrameOffsets, FaceLandmarks } from '@/types/face-validation';
 import { cn } from '@/lib/utils';
+import { selectFrame } from '@/services/glassesApi';
+import { toast } from 'sonner';
 
 // Import frame images
 import frame1Img from '@/assets/frames/frame1.png';
@@ -14,7 +17,7 @@ import frame3Img from '@/assets/frames/frame3.png';
 // Real glasses frames with dimensions (mm) and per-frame offsets
 const FRAMES: GlassesFrame[] = [
   {
-    id: '1',
+    id: 'frame_1',
     name: 'Pink Cat-Eye',
     imageUrl: frame1Img,
     category: 'cat-eye',
@@ -26,7 +29,7 @@ const FRAMES: GlassesFrame[] = [
     offsets: { offsetX: 0, offsetY: 0, scaleAdjust: 1.0, rotationAdjust: 0 },
   },
   {
-    id: '2',
+    id: 'frame_2',
     name: 'Blue Round',
     imageUrl: frame2Img,
     category: 'round',
@@ -38,7 +41,7 @@ const FRAMES: GlassesFrame[] = [
     offsets: { offsetX: 0, offsetY: 0, scaleAdjust: 1.0, rotationAdjust: 0 },
   },
   {
-    id: '3',
+    id: 'frame_3',
     name: 'Black Aviator',
     imageUrl: frame3Img,
     category: 'aviator',
@@ -52,14 +55,6 @@ const FRAMES: GlassesFrame[] = [
 ];
 
 type FitCategory = 'tight' | 'perfect' | 'loose';
-
-// Frame PNG internal eye width in pixels (distance between lens centers in the PNG)
-// This should match the actual frame PNG - adjust per frame if needed
-const FRAME_PNG_INTERNAL_EYE_WIDTH_PX: Record<string, number> = {
-  '1': 200, // Pink Cat-Eye
-  '2': 180, // Blue Round
-  '3': 220, // Black Aviator
-};
 
 interface FrameTransform {
   midX: number;          // Midpoint X between eye centers
@@ -108,6 +103,7 @@ function computeFrameTransform(
 ): FrameTransform | null {
   if (naturalSize.width === 0 || naturalSize.height === 0) return null;
   if (containerSize.width === 0 || containerSize.height === 0) return null;
+  if (faceWidthMm <= 0) return null;
 
   // Landmarks are 0-1 normalized. Convert to natural image pixels first.
   const leftEyeNatural = {
@@ -117,6 +113,16 @@ function computeFrameTransform(
   const rightEyeNatural = {
     x: landmarks.rightEye.x * naturalSize.width,
     y: landmarks.rightEye.y * naturalSize.height,
+  };
+
+  // Also get face edge points for width calculation
+  const faceLeftNatural = {
+    x: landmarks.faceLeft.x * naturalSize.width,
+    y: landmarks.faceLeft.y * naturalSize.height,
+  };
+  const faceRightNatural = {
+    x: landmarks.faceRight.x * naturalSize.width,
+    y: landmarks.faceRight.y * naturalSize.height,
   };
 
   // Scale from natural to displayed container size
@@ -134,8 +140,16 @@ function computeFrameTransform(
     y: rightEyeNatural.y * displayScale.y,
   };
 
+  // Calculate face width in displayed pixels
+  const faceLeftDisplay = {
+    x: faceLeftNatural.x * displayScale.x,
+  };
+  const faceRightDisplay = {
+    x: faceRightNatural.x * displayScale.x,
+  };
+  const faceWidthPx = Math.abs(faceRightDisplay.x - faceLeftDisplay.x);
+
   // Calculate angle: right eye to left eye direction for correct frame orientation
-  // In MediaPipe, left eye appears on the RIGHT side of image (mirrored view)
   const dx = rightCenter.x - leftCenter.x;
   const dy = rightCenter.y - leftCenter.y;
   const angleRad = Math.atan2(dy, dx);
@@ -143,11 +157,17 @@ function computeFrameTransform(
   // Calculate eye distance in displayed pixels
   const eyeDistancePx = Math.sqrt(dx * dx + dy * dy);
 
-  // Calculate scale factor: how much to scale frame PNG so its internal
-  // eye width matches the detected eye distance in pixels
-  const frameInternalWidth = FRAME_PNG_INTERNAL_EYE_WIDTH_PX[frame.id] || 200;
-  // Scale up by 2.5x to account for full frame width vs just eye centers
-  const scaleFactor = (eyeDistancePx / frameInternalWidth) * 2.5;
+  // KEY: Calculate scale factor using real-world dimensions
+  // faceWidthPx corresponds to faceWidthMm in the real world
+  // So: mmPerPixel = faceWidthMm / faceWidthPx
+  // Frame should be displayed at: frame.width * (faceWidthPx / faceWidthMm) pixels
+  const mmPerPixel = faceWidthMm / faceWidthPx;
+  const frameWidthPx = frame.width / mmPerPixel;
+  
+  // Scale factor relative to the original frame PNG width
+  // Assume frame PNG is approximately 400px wide as baseline
+  const FRAME_PNG_BASE_WIDTH = 400;
+  const scaleFactor = frameWidthPx / FRAME_PNG_BASE_WIDTH;
 
   // Position - midpoint between eyes
   const midX = (leftCenter.x + rightCenter.x) / 2;
@@ -199,7 +219,9 @@ export function FramesTab() {
   const [selectedFrame, setSelectedFrame] = useState<GlassesFrame | null>(null);
   const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
   const [adjustments, setAdjustments] = useState<AdjustmentValues>(DEFAULT_ADJUSTMENTS);
+  const [isSaving, setIsSaving] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
+  const previewContainerRef = useRef<HTMLDivElement>(null);
 
   const handleImageLoad = (e: React.SyntheticEvent<HTMLImageElement>) => {
     const img = e.currentTarget;
@@ -219,6 +241,90 @@ export function FramesTab() {
   const handleResetAdjustments = () => {
     setAdjustments(selectedFrame?.offsets || DEFAULT_ADJUSTMENTS);
   };
+
+  // Capture the preview as an image and save via API
+  const handleSaveFrame = useCallback(async () => {
+    if (!selectedFrame || !previewContainerRef.current || !capturedData) {
+      toast.error('Please select a frame first');
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      // Create a canvas to composite the image
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('Could not get canvas context');
+
+      // Load the base image
+      const baseImg = new Image();
+      baseImg.crossOrigin = 'anonymous';
+      await new Promise<void>((resolve, reject) => {
+        baseImg.onload = () => resolve();
+        baseImg.onerror = reject;
+        baseImg.src = capturedData.processedImageDataUrl;
+      });
+
+      canvas.width = baseImg.naturalWidth;
+      canvas.height = baseImg.naturalHeight;
+      ctx.drawImage(baseImg, 0, 0);
+
+      // Load and draw the frame overlay
+      const frameImg = new Image();
+      frameImg.crossOrigin = 'anonymous';
+      await new Promise<void>((resolve, reject) => {
+        frameImg.onload = () => resolve();
+        frameImg.onerror = reject;
+        frameImg.src = selectedFrame.imageUrl;
+      });
+
+      // Calculate transform for natural image size
+      if (capturedData.landmarks && capturedData.measurements) {
+        const naturalSize = { width: baseImg.naturalWidth, height: baseImg.naturalHeight };
+        const naturalTransform = computeFrameTransform(
+          selectedFrame,
+          capturedData.landmarks,
+          capturedData.measurements.face_width,
+          naturalSize,
+          naturalSize
+        );
+
+        if (naturalTransform) {
+          const finalScale = naturalTransform.scaleFactor * adjustments.scaleAdjust;
+          const finalRotation = naturalTransform.angleRad + (adjustments.rotationAdjust * Math.PI / 180);
+          const frameWidth = frameImg.naturalWidth * finalScale;
+          const frameHeight = frameImg.naturalHeight * finalScale;
+
+          ctx.save();
+          ctx.translate(naturalTransform.midX + adjustments.offsetX, naturalTransform.midY + adjustments.offsetY);
+          ctx.rotate(finalRotation);
+          ctx.drawImage(frameImg, -frameWidth / 2, -frameHeight / 2, frameWidth, frameHeight);
+          ctx.restore();
+        }
+      }
+
+      // Convert to data URL
+      const compositeImageUrl = canvas.toDataURL('image/jpeg', 0.9);
+
+      // Format dimensions string
+      const dimensions = `${selectedFrame.lensWidth}-${selectedFrame.noseBridge}-${selectedFrame.templeLength}-${selectedFrame.width}`;
+
+      // Call API
+      await selectFrame(
+        compositeImageUrl,
+        selectedFrame.id,
+        selectedFrame.name,
+        dimensions
+      );
+
+      toast.success('Frame selection saved successfully!');
+    } catch (error) {
+      console.error('Error saving frame:', error);
+      toast.error('Failed to save frame selection');
+    } finally {
+      setIsSaving(false);
+    }
+  }, [selectedFrame, capturedData, adjustments]);
 
   // Compute transform using eye-center based math from local face detection
   const transform = useMemo(() => {
@@ -306,6 +412,23 @@ export function FramesTab() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Save Frame Button */}
+            {selectedFrame && (
+              <Button
+                variant="default"
+                size="sm"
+                onClick={handleSaveFrame}
+                disabled={isSaving}
+                className="gap-2"
+              >
+                {isSaving ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Save className="h-4 w-4" />
+                )}
+                {isSaving ? 'Saving...' : 'Save Frame'}
+              </Button>
+            )}
 
             {/* Fit badge */}
             {transform && fitInfo && (
@@ -317,7 +440,7 @@ export function FramesTab() {
           </div>
         </div>
 
-        <div className="relative rounded-lg overflow-hidden bg-black aspect-[4/3]">
+        <div ref={previewContainerRef} className="relative rounded-lg overflow-hidden bg-black aspect-[4/3]">
           {/* User's face image */}
           <img
             ref={imageRef}
