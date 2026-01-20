@@ -80,14 +80,25 @@ const DEFAULT_ADJUSTMENTS: AdjustmentValues = {
 };
 
 /**
- * Professional frame overlay calculation using exact math:
+ * Professional frame overlay calculation for realistic glasses fitting:
  * 
- * 1. Calculate eye centers from local face landmarks
- * 2. Calculate angle = atan2(leftCenter.y - rightCenter.y, leftCenter.x - rightCenter.x)
- * 3. Calculate eye distance in pixels
- * 4. Calculate scale factor = eyeDistancePx / FRAME_PNG_INTERNAL_EYE_WIDTH
- * 5. Position at midpoint between eyes, slightly above for natural fit
+ * Key insight: The API provides real PD (pupillary distance) in mm, and we have
+ * the frame's lens geometry (lensWidth + noseBridge = optical center distance).
+ * 
+ * For realistic fit:
+ * 1. The frame's optical centers should align with the user's pupils
+ * 2. Optical center distance = lensWidth + noseBridge (approx center of each lens)
+ * 3. Scale factor = user's PD in pixels / frame's optical center distance in pixels
  */
+
+// Calibration values for each frame PNG (measured internal lens-center-to-lens-center distance in pixels)
+// These must match the actual pixel measurements in each frame PNG asset
+const FRAME_PNG_CALIBRATION: Record<string, number> = {
+  'frame_1': 185, // Pink Cat-Eye: internal optical width in PNG pixels
+  'frame_2': 170, // Blue Round: internal optical width in PNG pixels  
+  'frame_3': 210, // Black Aviator: internal optical width in PNG pixels
+};
+
 /**
  * Compute frame overlay transform.
  * 
@@ -98,12 +109,13 @@ function computeFrameTransform(
   frame: GlassesFrame,
   landmarks: FaceLandmarks,
   faceWidthMm: number,
+  pdMm: number,
   containerSize: { width: number; height: number },
   naturalSize: { width: number; height: number }
 ): FrameTransform | null {
   if (naturalSize.width === 0 || naturalSize.height === 0) return null;
   if (containerSize.width === 0 || containerSize.height === 0) return null;
-  if (faceWidthMm <= 0) return null;
+  if (faceWidthMm <= 0 || pdMm <= 0) return null;
 
   // Landmarks are 0-1 normalized. Convert to natural image pixels first.
   const leftEyeNatural = {
@@ -141,13 +153,7 @@ function computeFrameTransform(
   };
 
   // Calculate face width in displayed pixels
-  const faceLeftDisplay = {
-    x: faceLeftNatural.x * displayScale.x,
-  };
-  const faceRightDisplay = {
-    x: faceRightNatural.x * displayScale.x,
-  };
-  const faceWidthPx = Math.abs(faceRightDisplay.x - faceLeftDisplay.x);
+  const faceWidthPx = Math.abs(faceRightNatural.x - faceLeftNatural.x) * displayScale.x;
 
   // Calculate angle: right eye to left eye direction for correct frame orientation
   const dx = rightCenter.x - leftCenter.x;
@@ -161,27 +167,37 @@ function computeFrameTransform(
     angleRad = 0;
   }
 
-  // Calculate eye distance in displayed pixels
+  // Calculate eye distance (PD) in displayed pixels
   const eyeDistancePx = Math.sqrt(dx * dx + dy * dy);
 
-  // KEY: Calculate scale factor using real-world dimensions
-  // faceWidthPx corresponds to faceWidthMm in the real world
-  // So: mmPerPixel = faceWidthMm / faceWidthPx
-  // Frame should be displayed at: frame.width * (faceWidthPx / faceWidthMm) pixels
+  // Calculate mm per pixel ratio from face width
   const mmPerPixel = faceWidthMm / faceWidthPx;
-  const frameWidthPx = frame.width / mmPerPixel;
   
-  // Scale factor relative to the original frame PNG width
-  // Assume frame PNG is approximately 400px wide as baseline
-  const FRAME_PNG_BASE_WIDTH = 400;
-  const scaleFactor = frameWidthPx / FRAME_PNG_BASE_WIDTH;
+  // Convert user's PD from mm to display pixels
+  const pdPx = pdMm / mmPerPixel;
+  
+  // Get the frame's PNG internal optical width calibration
+  const framePngOpticalWidth = FRAME_PNG_CALIBRATION[frame.id] || 180;
+  
+  // Calculate the frame's optical center distance in mm
+  // Optical centers are approximately at: lensWidth/2 from each side + noseBridge
+  // So optical center distance ≈ lensWidth + noseBridge (center of each lens)
+  const frameOpticalCenterDistMm = frame.lensWidth + frame.noseBridge;
+  
+  // Scale factor: how much to scale the PNG so its optical centers match user's PD
+  // The PNG's optical centers are at framePngOpticalWidth pixels apart
+  // We want them to be pdPx pixels apart on screen
+  const scaleFactor = pdPx / framePngOpticalWidth;
 
-  // Position - midpoint between eyes
+  // Position - midpoint between eyes (this is where nose bridge should go)
   const midX = (leftCenter.x + rightCenter.x) / 2;
   const midY = (leftCenter.y + rightCenter.y) / 2;
 
-  // Adjust Y slightly below eye center for natural nose bridge placement
-  const frameY = midY + (eyeDistancePx * 0.1);
+  // Vertical offset: glasses sit slightly below eye center on the nose bridge
+  // Typical glasses rest about 8-12mm below eye center, scale proportionally
+  const verticalOffsetMm = 8; // mm below eye center where glasses rest
+  const verticalOffsetPx = verticalOffsetMm / mmPerPixel;
+  const frameY = midY + verticalOffsetPx;
 
   // Fit classification based on frame width vs face width
   const diff = frame.width - faceWidthMm;
@@ -293,6 +309,7 @@ export function FramesTab() {
           selectedFrame,
           capturedData.landmarks,
           capturedData.measurements.face_width,
+          capturedData.measurements.pd,
           naturalSize,
           naturalSize
         );
@@ -355,6 +372,7 @@ export function FramesTab() {
       selectedFrame,
       landmarks,
       measurements?.face_width ?? 0,
+      measurements?.pd ?? 0,
       containerSize,
       naturalSize
     );
