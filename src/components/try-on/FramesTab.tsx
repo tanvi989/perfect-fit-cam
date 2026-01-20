@@ -80,44 +80,39 @@ const DEFAULT_ADJUSTMENTS: AdjustmentValues = {
 };
 
 /**
- * Professional frame overlay calculation for realistic glasses fitting:
- * 
- * Key insight: The API provides real PD (pupillary distance) in mm, and we have
- * the frame's lens geometry (lensWidth + noseBridge = optical center distance).
- * 
- * For realistic fit:
- * 1. The frame's optical centers should align with the user's pupils
- * 2. Optical center distance = lensWidth + noseBridge (approx center of each lens)
- * 3. Scale factor = user's PD in pixels / frame's optical center distance in pixels
- */
-
-// Calibration values for each frame PNG (measured internal lens-center-to-lens-center distance in pixels)
-// These must match the actual pixel measurements in each frame PNG asset
-const FRAME_PNG_CALIBRATION: Record<string, number> = {
-  'frame_1': 185, // Pink Cat-Eye: internal optical width in PNG pixels
-  'frame_2': 170, // Blue Round: internal optical width in PNG pixels  
-  'frame_3': 210, // Black Aviator: internal optical width in PNG pixels
-};
-
-/**
- * Compute frame overlay transform.
- * 
- * Local landmarks are normalized 0-1 (MediaPipe), so we first convert them
- * to pixel positions in the natural image size, then scale to container size.
+ * Frame overlay calculation (frontend-only).
+ *
+ * IMPORTANT: The preview image uses `object-contain`, so the drawn image can be
+ * letterboxed inside the element. We must map landmarks into the *drawn image rect*
+ * (not the full element box) to avoid big X/Y offsets.
  */
 function computeFrameTransform(
   frame: GlassesFrame,
   landmarks: FaceLandmarks,
   faceWidthMm: number,
-  pdMm: number,
   containerSize: { width: number; height: number },
   naturalSize: { width: number; height: number }
 ): FrameTransform | null {
   if (naturalSize.width === 0 || naturalSize.height === 0) return null;
   if (containerSize.width === 0 || containerSize.height === 0) return null;
-  if (faceWidthMm <= 0 || pdMm <= 0) return null;
+  if (faceWidthMm <= 0) return null;
 
-  // Landmarks are 0-1 normalized. Convert to natural image pixels first.
+  // object-contain mapping: compute actual drawn image rect within the container box
+  const scale = Math.min(
+    containerSize.width / naturalSize.width,
+    containerSize.height / naturalSize.height
+  );
+  const drawnWidth = naturalSize.width * scale;
+  const drawnHeight = naturalSize.height * scale;
+  const offsetX = (containerSize.width - drawnWidth) / 2;
+  const offsetY = (containerSize.height - drawnHeight) / 2;
+
+  const toDisplay = (p: { x: number; y: number }) => ({
+    x: p.x * scale + offsetX,
+    y: p.y * scale + offsetY,
+  });
+
+  // Convert normalized landmarks to natural pixels, then map into drawn-rect display pixels
   const leftEyeNatural = {
     x: landmarks.leftEye.x * naturalSize.width,
     y: landmarks.leftEye.y * naturalSize.height,
@@ -126,8 +121,6 @@ function computeFrameTransform(
     x: landmarks.rightEye.x * naturalSize.width,
     y: landmarks.rightEye.y * naturalSize.height,
   };
-
-  // Also get face edge points for width calculation
   const faceLeftNatural = {
     x: landmarks.faceLeft.x * naturalSize.width,
     y: landmarks.faceLeft.y * naturalSize.height,
@@ -137,69 +130,40 @@ function computeFrameTransform(
     y: landmarks.faceRight.y * naturalSize.height,
   };
 
-  // Scale from natural to displayed container size
-  const displayScale = {
-    x: containerSize.width / naturalSize.width,
-    y: containerSize.height / naturalSize.height,
-  };
+  const leftCenter = toDisplay(leftEyeNatural);
+  const rightCenter = toDisplay(rightEyeNatural);
+  const faceLeftDisplay = toDisplay(faceLeftNatural);
+  const faceRightDisplay = toDisplay(faceRightNatural);
 
-  const leftCenter = {
-    x: leftEyeNatural.x * displayScale.x,
-    y: leftEyeNatural.y * displayScale.y,
-  };
-  const rightCenter = {
-    x: rightEyeNatural.x * displayScale.x,
-    y: rightEyeNatural.y * displayScale.y,
-  };
+  // Face width in display pixels (within the drawn image)
+  const faceWidthPx = Math.abs(faceRightDisplay.x - faceLeftDisplay.x);
 
-  // Calculate face width in displayed pixels
-  const faceWidthPx = Math.abs(faceRightNatural.x - faceLeftNatural.x) * displayScale.x;
-
-  // Calculate angle: right eye to left eye direction for correct frame orientation
+  // Angle (head roll) from eyes
   const dx = rightCenter.x - leftCenter.x;
   const dy = rightCenter.y - leftCenter.y;
   let angleRad = Math.atan2(dy, dx);
-  
-  // Apply threshold: only rotate if head tilt is significant (> 3 degrees)
-  // This prevents minor landmark detection noise from causing unwanted tilt
-  const angleDeg = Math.abs(angleRad * 180 / Math.PI);
-  if (angleDeg < 3) {
-    angleRad = 0;
-  }
 
-  // Calculate eye distance (PD) in displayed pixels
+  // Ignore tiny rotations caused by landmark noise
+  const angleDeg = Math.abs((angleRad * 180) / Math.PI);
+  if (angleDeg < 3) angleRad = 0;
+
   const eyeDistancePx = Math.sqrt(dx * dx + dy * dy);
 
-  // Calculate mm per pixel ratio from face width
+  // Scale using real-world face width from API vs measured face width in pixels
   const mmPerPixel = faceWidthMm / faceWidthPx;
-  
-  // Convert user's PD from mm to display pixels
-  const pdPx = pdMm / mmPerPixel;
-  
-  // Get the frame's PNG internal optical width calibration
-  const framePngOpticalWidth = FRAME_PNG_CALIBRATION[frame.id] || 180;
-  
-  // Calculate the frame's optical center distance in mm
-  // Optical centers are approximately at: lensWidth/2 from each side + noseBridge
-  // So optical center distance ≈ lensWidth + noseBridge (center of each lens)
-  const frameOpticalCenterDistMm = frame.lensWidth + frame.noseBridge;
-  
-  // Scale factor: how much to scale the PNG so its optical centers match user's PD
-  // The PNG's optical centers are at framePngOpticalWidth pixels apart
-  // We want them to be pdPx pixels apart on screen
-  const scaleFactor = pdPx / framePngOpticalWidth;
+  const desiredFrameWidthPx = frame.width / mmPerPixel;
 
-  // Position - midpoint between eyes (this is where nose bridge should go)
+  // Baseline: frame PNG natural width is roughly ~400px in our assets.
+  // (This keeps behavior consistent with the previous working implementation.)
+  const FRAME_PNG_BASE_WIDTH = 400;
+  const scaleFactor = desiredFrameWidthPx / FRAME_PNG_BASE_WIDTH;
+
+  // Position: midpoint between eyes, then slight downward offset to sit on bridge
   const midX = (leftCenter.x + rightCenter.x) / 2;
   const midY = (leftCenter.y + rightCenter.y) / 2;
+  const frameY = midY + eyeDistancePx * 0.12;
 
-  // Vertical offset: glasses sit slightly below eye center on the nose bridge
-  // Typical glasses rest about 8-12mm below eye center, scale proportionally
-  const verticalOffsetMm = 8; // mm below eye center where glasses rest
-  const verticalOffsetPx = verticalOffsetMm / mmPerPixel;
-  const frameY = midY + verticalOffsetPx;
-
-  // Fit classification based on frame width vs face width
+  // Fit classification
   const diff = frame.width - faceWidthMm;
   let fit: FitCategory;
   if (diff <= -3) fit = 'tight';
@@ -309,7 +273,6 @@ export function FramesTab() {
           selectedFrame,
           capturedData.landmarks,
           capturedData.measurements.face_width,
-          capturedData.measurements.pd,
           naturalSize,
           naturalSize
         );
@@ -372,7 +335,6 @@ export function FramesTab() {
       selectedFrame,
       landmarks,
       measurements?.face_width ?? 0,
-      measurements?.pd ?? 0,
       containerSize,
       naturalSize
     );
