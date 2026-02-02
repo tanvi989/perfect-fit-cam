@@ -228,6 +228,7 @@ export function FramesTab() {
   const [adjustments, setAdjustments] = useState<AdjustmentValues>(DEFAULT_ADJUSTMENTS);
   const [isSaving, setIsSaving] = useState(false);
   const [fittingHeight, setFittingHeight] = useState<number | null>(null);
+  const [showDebug, setShowDebug] = useState(false);
   const imageRef = useRef<HTMLImageElement>(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
 
@@ -340,6 +341,38 @@ export function FramesTab() {
     }
   }, [selectedFrame, capturedData, adjustments]);
 
+  // Compute debug markers for eye positions
+  const debugMarkers = useMemo(() => {
+    if (!capturedData?.landmarks || !imageRef.current || containerSize.width === 0) return null;
+
+    const { landmarks } = capturedData;
+    const img = imageRef.current;
+    const naturalSize = { width: img.naturalWidth || 1, height: img.naturalHeight || 1 };
+
+    // object-contain mapping
+    const scale = Math.min(containerSize.width / naturalSize.width, containerSize.height / naturalSize.height);
+    const drawnWidth = naturalSize.width * scale;
+    const drawnHeight = naturalSize.height * scale;
+    const offsetX = (containerSize.width - drawnWidth) / 2;
+    const offsetY = (containerSize.height - drawnHeight) / 2;
+
+    const toDisplay = (p: { x: number; y: number }) => ({
+      x: p.x * naturalSize.width * scale + offsetX,
+      y: p.y * naturalSize.height * scale + offsetY,
+    });
+
+    return {
+      leftEye: toDisplay(landmarks.leftEye),
+      rightEye: toDisplay(landmarks.rightEye),
+      faceLeft: toDisplay(landmarks.faceLeft),
+      faceRight: toDisplay(landmarks.faceRight),
+      eyeCenter: {
+        x: (toDisplay(landmarks.leftEye).x + toDisplay(landmarks.rightEye).x) / 2,
+        y: (toDisplay(landmarks.leftEye).y + toDisplay(landmarks.rightEye).y) / 2,
+      },
+    };
+  }, [capturedData, containerSize]);
+
   // Compute transform using eye-center based math from local face detection
   const transform = useMemo(() => {
     if (!selectedFrame || !capturedData?.landmarks || !imageRef.current) return null;
@@ -427,6 +460,16 @@ export function FramesTab() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Debug Toggle */}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setShowDebug(!showDebug)}
+              className="gap-1 text-xs"
+            >
+              {showDebug ? 'Hide' : 'Show'} Debug
+            </Button>
+
             {/* Save Frame Button */}
             {selectedFrame && (
               <Button
@@ -465,6 +508,73 @@ export function FramesTab() {
             onLoad={handleImageLoad}
           />
 
+          {/* Debug overlay - shows detected landmark positions */}
+          {showDebug && debugMarkers && (
+            <>
+              {/* Left eye marker */}
+              <div
+                className="absolute w-3 h-3 bg-green-500 rounded-full border-2 border-white"
+                style={{
+                  left: `${debugMarkers.leftEye.x}px`,
+                  top: `${debugMarkers.leftEye.y}px`,
+                  transform: 'translate(-50%, -50%)',
+                }}
+                title="Left Eye"
+              />
+              {/* Right eye marker */}
+              <div
+                className="absolute w-3 h-3 bg-blue-500 rounded-full border-2 border-white"
+                style={{
+                  left: `${debugMarkers.rightEye.x}px`,
+                  top: `${debugMarkers.rightEye.y}px`,
+                  transform: 'translate(-50%, -50%)',
+                }}
+                title="Right Eye"
+              />
+              {/* Eye center marker */}
+              <div
+                className="absolute w-4 h-4 bg-red-500 rounded-full border-2 border-white"
+                style={{
+                  left: `${debugMarkers.eyeCenter.x}px`,
+                  top: `${debugMarkers.eyeCenter.y}px`,
+                  transform: 'translate(-50%, -50%)',
+                }}
+                title="Eye Center"
+              />
+              {/* Face left boundary */}
+              <div
+                className="absolute w-2 h-2 bg-yellow-500 rounded-full"
+                style={{
+                  left: `${debugMarkers.faceLeft.x}px`,
+                  top: `${debugMarkers.faceLeft.y}px`,
+                  transform: 'translate(-50%, -50%)',
+                }}
+                title="Face Left"
+              />
+              {/* Face right boundary */}
+              <div
+                className="absolute w-2 h-2 bg-yellow-500 rounded-full"
+                style={{
+                  left: `${debugMarkers.faceRight.x}px`,
+                  top: `${debugMarkers.faceRight.y}px`,
+                  transform: 'translate(-50%, -50%)',
+                }}
+                title="Face Right"
+              />
+              {/* Connection line between eyes */}
+              <svg className="absolute inset-0 pointer-events-none">
+                <line
+                  x1={debugMarkers.leftEye.x}
+                  y1={debugMarkers.leftEye.y}
+                  x2={debugMarkers.rightEye.x}
+                  y2={debugMarkers.rightEye.y}
+                  stroke="rgba(255,255,255,0.5)"
+                  strokeWidth="1"
+                  strokeDasharray="4"
+                />
+              </svg>
+            </>
+          )}
 
           {/* Frame overlay with CSS transforms */}
           {selectedFrame && transform && (
