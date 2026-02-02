@@ -178,14 +178,17 @@ function computeFrameTransform(
   // Scale factor: make the frame's optical centers match the user's PD in display pixels
   const scaleFactor = pdDisplayPx / frameOpticalCenterPx;
 
-  // Position: midpoint between eyes
-  const midX = (leftCenter.x + rightCenter.x) / 2;
-  const midY = (leftCenter.y + rightCenter.y) / 2;
+  // Use FACE CENTER for horizontal positioning (more stable than eye landmarks)
+  // Eye landmarks can shift based on gaze direction, but face edges are more consistent
+  const faceCenterX = (faceLeftDisplay.x + faceRightDisplay.x) / 2;
   
-  // Vertical offset: position frame slightly below eye centers (nose bridge sits ~8mm below eyes)
-  const noseBridgeOffsetMm = 8;
+  // Use EYE CENTER for vertical positioning (more accurate for glasses height)
+  const eyeCenterY = (leftCenter.y + rightCenter.y) / 2;
+  
+  // Vertical offset: position frame slightly below eye centers (nose bridge sits ~6mm below eyes)
+  const noseBridgeOffsetMm = 6;
   const noseBridgeOffsetPx = noseBridgeOffsetMm * mmToDisplayPx;
-  const frameY = midY + noseBridgeOffsetPx;
+  const frameY = eyeCenterY + noseBridgeOffsetPx;
 
   // Fit classification
   const diff = frame.width - faceWidthMm;
@@ -195,7 +198,7 @@ function computeFrameTransform(
   else fit = 'perfect';
 
   return {
-    midX,
+    midX: faceCenterX,
     midY: frameY,
     scaleFactor,
     angleRad,
