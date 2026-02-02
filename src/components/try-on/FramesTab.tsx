@@ -14,6 +14,16 @@ import frame1Img from '@/assets/frames/frame1.png';
 import frame2Img from '@/assets/frames/frame2.png';
 import frame3Img from '@/assets/frames/frame3.png';
 
+/**
+ * Frame PNG calibration: the pixel distance between optical centers (lens centers) in each PNG.
+ * This is critical for accurate scaling - measure the actual pixel distance in each frame PNG.
+ */
+const FRAME_OPTICAL_CENTER_DISTANCE_PX: Record<string, number> = {
+  frame_1: 185, // Pink Cat-Eye - measured lens center to lens center in PNG
+  frame_2: 170, // Blue Round
+  frame_3: 200, // Black Aviator
+};
+
 // Real glasses frames with dimensions (mm) and per-frame offsets
 const FRAMES: GlassesFrame[] = [
   {
@@ -59,10 +69,11 @@ type FitCategory = 'tight' | 'perfect' | 'loose';
 interface FrameTransform {
   midX: number;          // Midpoint X between eye centers
   midY: number;          // Midpoint Y between eye centers (adjusted for nose bridge)
-  scaleFactor: number;   // Scale factor based on eye distance / frame internal width
+  scaleFactor: number;   // Scale factor based on PD ratio
   angleRad: number;      // Rotation in radians from atan2
   fit: FitCategory;      // Fit classification
-  eyeDistancePx: number; // Distance between eye centers
+  eyeDistancePx: number; // Distance between eye centers in display pixels
+  pdDisplayPx: number;   // PD in display pixels (for debugging)
 }
 
 interface AdjustmentValues {
@@ -85,17 +96,23 @@ const DEFAULT_ADJUSTMENTS: AdjustmentValues = {
  * IMPORTANT: The preview image uses `object-contain`, so the drawn image can be
  * letterboxed inside the element. We must map landmarks into the *drawn image rect*
  * (not the full element box) to avoid big X/Y offsets.
+ * 
+ * SCALING STRATEGY:
+ * 1. Use user's PD (pupillary distance) from API in mm
+ * 2. Map PD to display pixels using face width ratio
+ * 3. Scale frame so its optical center distance matches user's PD in display pixels
  */
 function computeFrameTransform(
   frame: GlassesFrame,
   landmarks: FaceLandmarks,
   faceWidthMm: number,
+  pdMm: number,
   containerSize: { width: number; height: number },
   naturalSize: { width: number; height: number }
 ): FrameTransform | null {
   if (naturalSize.width === 0 || naturalSize.height === 0) return null;
   if (containerSize.width === 0 || containerSize.height === 0) return null;
-  if (faceWidthMm <= 0) return null;
+  if (faceWidthMm <= 0 || pdMm <= 0) return null;
 
   // object-contain mapping: compute actual drawn image rect within the container box
   const scale = Math.min(
@@ -137,6 +154,12 @@ function computeFrameTransform(
 
   // Face width in display pixels (within the drawn image)
   const faceWidthPx = Math.abs(faceRightDisplay.x - faceLeftDisplay.x);
+  
+  // Convert mm to display pixels using face width ratio
+  const mmToDisplayPx = faceWidthPx / faceWidthMm;
+  
+  // User's PD in display pixels - this is where pupils should align with lens centers
+  const pdDisplayPx = pdMm * mmToDisplayPx;
 
   // Angle (head roll) from eyes
   const dx = rightCenter.x - leftCenter.x;
@@ -149,19 +172,20 @@ function computeFrameTransform(
 
   const eyeDistancePx = Math.sqrt(dx * dx + dy * dy);
 
-  // Scale using real-world face width from API vs measured face width in pixels
-  const mmPerPixel = faceWidthMm / faceWidthPx;
-  const desiredFrameWidthPx = frame.width / mmPerPixel;
+  // Get frame's optical center distance in PNG pixels
+  const frameOpticalCenterPx = FRAME_OPTICAL_CENTER_DISTANCE_PX[frame.id] || 185;
+  
+  // Scale factor: make the frame's optical centers match the user's PD in display pixels
+  const scaleFactor = pdDisplayPx / frameOpticalCenterPx;
 
-  // Baseline: frame PNG natural width is roughly ~400px in our assets.
-  // (This keeps behavior consistent with the previous working implementation.)
-  const FRAME_PNG_BASE_WIDTH = 400;
-  const scaleFactor = desiredFrameWidthPx / FRAME_PNG_BASE_WIDTH;
-
-  // Position: midpoint between eyes, then slight downward offset to sit on bridge
+  // Position: midpoint between eyes
   const midX = (leftCenter.x + rightCenter.x) / 2;
   const midY = (leftCenter.y + rightCenter.y) / 2;
-  const frameY = midY + eyeDistancePx * 0.12;
+  
+  // Vertical offset: position frame slightly below eye centers (nose bridge sits ~8mm below eyes)
+  const noseBridgeOffsetMm = 8;
+  const noseBridgeOffsetPx = noseBridgeOffsetMm * mmToDisplayPx;
+  const frameY = midY + noseBridgeOffsetPx;
 
   // Fit classification
   const diff = frame.width - faceWidthMm;
@@ -177,6 +201,7 @@ function computeFrameTransform(
     angleRad,
     fit,
     eyeDistancePx,
+    pdDisplayPx,
   };
 }
 
@@ -273,6 +298,7 @@ export function FramesTab() {
           selectedFrame,
           capturedData.landmarks,
           capturedData.measurements.face_width,
+          capturedData.measurements.pd,
           naturalSize,
           naturalSize
         );
@@ -335,6 +361,7 @@ export function FramesTab() {
       selectedFrame,
       landmarks,
       measurements?.face_width ?? 0,
+      measurements?.pd ?? 0,
       containerSize,
       naturalSize
     );
@@ -481,8 +508,8 @@ export function FramesTab() {
         {transform && (
           <div className="mt-2 text-xs text-muted-foreground font-mono">
             Scale: {((transform.scaleFactor ?? 0) * (adjustments?.scaleAdjust ?? 1)).toFixed(3)} |
+            PD: {(transform.pdDisplayPx ?? 0).toFixed(0)}px |
             Angle: {((transform.angleRad ?? 0) * 180 / Math.PI).toFixed(1)}° |
-            Eye Distance: {(transform.eyeDistancePx ?? 0).toFixed(0)}px |
             Position: ({(transform.midX ?? 0).toFixed(0)}, {(transform.midY ?? 0).toFixed(0)})
           </div>
         )}
