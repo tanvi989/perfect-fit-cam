@@ -20,7 +20,7 @@ npm run preview
 
 ## API URL
 
-By default the client calls `http://localhost:8000` (see `src/services/glassesApi.ts`). For production, point that base URL at your deployed **`mf_backend`** instance and ensure CORS allows your web origin.
+Production builds use **`https://vtob.multifolks.com`** (see `src/services/glassesApi.ts`). For local backend, add **`.env.local`** with `VITE_API_BASE_URL=http://localhost:8000`. Ensure the API allows your web origin in CORS.
 
 ## Env (optional)
 

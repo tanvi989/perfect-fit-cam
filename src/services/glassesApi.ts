@@ -1,6 +1,9 @@
 import { getCaptureClientInfo } from '@/lib/captureClientInfo';
 
-const API_BASE = 'http://localhost:8000';
+/** Deployed API — override with VITE_API_BASE_URL in .env.local for local backend */
+const API_BASE = (
+  import.meta.env.VITE_API_BASE_URL ?? 'https://vtob.multifolks.com'
+).replace(/\/+$/, '');
 
 // Session management - simple incrementing IDs stored in sessionStorage
 function getSessionIds(): { guestId: string; sessionId: string } {
