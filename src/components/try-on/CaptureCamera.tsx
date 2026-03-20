@@ -2,7 +2,6 @@ import { useRef, useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCamera } from '@/hooks/useCamera';
 import { useFaceDetection } from '@/hooks/useFaceDetection';
-import { useMobileCaptureMode } from '@/hooks/useMobileCaptureMode';
 import { getPdSteadyFramesRequired } from '@/lib/pdCaptureDistance';
 import { useCaptureData } from '@/context/CaptureContext';
 import { useVoiceGuidance } from '@/hooks/useVoiceGuidance';
