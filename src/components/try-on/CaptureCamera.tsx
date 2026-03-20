@@ -1,7 +1,8 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCamera } from '@/hooks/useCamera';
-import { useFaceDetection, PD_STEADY_FRAMES_REQUIRED } from '@/hooks/useFaceDetection';
+import { useFaceDetection } from '@/hooks/useFaceDetection';
+import { getPdSteadyFramesRequired } from '@/lib/pdCaptureDistance';
 import { useCaptureData } from '@/context/CaptureContext';
 import { useVoiceGuidance } from '@/hooks/useVoiceGuidance';
 import { CameraPermission } from './CameraPermission';
@@ -248,7 +249,7 @@ export function CaptureCamera() {
           brightness: faceValidationState.brightness,
           eyeLevelDelta: faceValidationState.eyeLevelDelta,
           steadyFrames: faceValidationState.steadyFrames,
-          steadyRequired: PD_STEADY_FRAMES_REQUIRED,
+          steadyRequired: getPdSteadyFramesRequired(),
           maxHeadTilt: 6,
           maxHeadRotation: 8,
           maxEyeYDelta: 0.012,

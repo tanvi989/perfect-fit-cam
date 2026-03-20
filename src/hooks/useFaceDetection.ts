@@ -26,29 +26,45 @@ const LANDMARK_INDICES = {
 // Percent ranges were tuned around FACE_WIDTH_CALIBRATION_CM; scale by target distance per device.
 const FACE_WIDTH_CALIBRATION_CM = 43;
 
-/** Require ~1s of stable alignment at ~10 FPS face-mesh processing before auto-capture */
-export const PD_STEADY_FRAMES_REQUIRED = 10;
-
-// Mobile: shorter target distance (comfortable selfie) + wider % band — phone FOV differs from webcam.
+// Mobile capture: relax framing / lighting / hold time so users can finish; keep pose limits
+// moderate (square-on + level eyes) so PD stays meaningful. Desktop stays strict.
 const getThresholds = (isMobile: boolean) => {
   const targetDistanceCm = isMobile ? PD_MOBILE_TARGET_DISTANCE_CM : PD_DESKTOP_TARGET_DISTANCE_CM;
   const distanceScale = FACE_WIDTH_CALIBRATION_CM / targetDistanceCm;
 
-  const distance = isMobile
-    ? {
-        targetFaceWidthPercent: 26 * distanceScale,
-        minFaceWidthPercent: 21 * distanceScale,
-        maxFaceWidthPercent: 36 * distanceScale,
-      }
-    : {
-        targetFaceWidthPercent: 21 * distanceScale,
-        minFaceWidthPercent: 18.5 * distanceScale,
-        maxFaceWidthPercent: 23 * distanceScale,
-      };
+  if (isMobile) {
+    return {
+      targetDistanceCm,
+      steadyFramesRequired: 5,
+      /** Very wide band — backend uses iris-scale PD; extremes still discouraged */
+      targetFaceWidthPercent: 28 * distanceScale,
+      minFaceWidthPercent: 11,
+      maxFaceWidthPercent: 52,
+      maxHeadTilt: 11,
+      maxHeadRotation: 14,
+      maxEyeYDelta: 0.02,
+      minBrightness: 80,
+      maxBrightness: 220,
+      minContrast: 0.3,
+      eyeAspectRatioThreshold: 0.006,
+      ovalCenterX: 0.5,
+      ovalCenterY: 0.45,
+      maxFaceOffsetX: 0.16,
+      maxFaceOffsetY: 0.19,
+      /** Phones in poor light were blocking everyone; PD still uses iris geometry */
+      skipLightingAlignmentGate: true,
+    };
+  }
+
+  const distance = {
+    targetFaceWidthPercent: 21 * distanceScale,
+    minFaceWidthPercent: 18.5 * distanceScale,
+    maxFaceWidthPercent: 23 * distanceScale,
+  };
 
   return {
     targetDistanceCm,
-    // Stricter than before: PD errors grow quickly with yaw / tilt / off-center framing
+    steadyFramesRequired: 10,
     maxHeadTilt: 6,
     maxHeadRotation: 8,
     maxEyeYDelta: 0.012,
@@ -61,6 +77,7 @@ const getThresholds = (isMobile: boolean) => {
     ovalCenterY: 0.45,
     maxFaceOffsetX: 0.07,
     maxFaceOffsetY: 0.09,
+    skipLightingAlignmentGate: false,
   };
 };
 
@@ -291,11 +308,13 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
           id: 'lighting',
           label: 'Lighting',
           passed:
-            state.brightness >= thresholds.minBrightness &&
-            state.brightness <= thresholds.maxBrightness &&
-            state.contrast >= thresholds.minContrast,
-          message:
-            state.brightness < thresholds.minBrightness
+            thresholds.skipLightingAlignmentGate ||
+            (state.brightness >= thresholds.minBrightness &&
+              state.brightness <= thresholds.maxBrightness &&
+              state.contrast >= thresholds.minContrast),
+          message: thresholds.skipLightingAlignmentGate
+            ? 'More light improves PD accuracy'
+            : state.brightness < thresholds.minBrightness
               ? 'Too dark — add light in front'
               : state.brightness > thresholds.maxBrightness
                 ? 'Too bright — soften light'
@@ -303,9 +322,10 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
                   ? 'Reduce harsh shadows on face'
                   : 'OK',
           severity:
-            state.brightness >= thresholds.minBrightness &&
-            state.brightness <= thresholds.maxBrightness &&
-            state.contrast >= thresholds.minContrast
+            thresholds.skipLightingAlignmentGate ||
+            (state.brightness >= thresholds.minBrightness &&
+              state.brightness <= thresholds.maxBrightness &&
+              state.contrast >= thresholds.minContrast)
               ? 'pass'
               : 'fail',
         },
@@ -333,6 +353,7 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
       thresholds.minContrast,
       thresholds.minFaceWidthPercent,
       thresholds.targetDistanceCm,
+      thresholds.skipLightingAlignmentGate,
     ],
   );
 
@@ -462,11 +483,9 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
 
     const baseChecks = generateAlignmentChecks(newState);
     const geometricPass = baseChecks.every((check) => check.passed);
+    const steadyNeed = thresholds.steadyFramesRequired;
     if (geometricPass) {
-      steadyFramesRef.current = Math.min(
-        PD_STEADY_FRAMES_REQUIRED,
-        steadyFramesRef.current + 1,
-      );
+      steadyFramesRef.current = Math.min(steadyNeed, steadyFramesRef.current + 1);
     } else {
       steadyFramesRef.current = 0;
     }
@@ -474,14 +493,14 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
     const holdSteady: ValidationCheck = {
       id: 'hold-steady',
       label: 'Hold steady (PD)',
-      passed: steadyFrames >= PD_STEADY_FRAMES_REQUIRED,
+      passed: steadyFrames >= steadyNeed,
       message:
-        steadyFrames >= PD_STEADY_FRAMES_REQUIRED
+        steadyFrames >= steadyNeed
           ? 'Locked — capturing…'
           : geometricPass
-            ? `Hold still (${steadyFrames}/${PD_STEADY_FRAMES_REQUIRED})`
+            ? `Hold still (${steadyFrames}/${steadyNeed})`
             : 'Fix alignment first',
-      severity: steadyFrames >= PD_STEADY_FRAMES_REQUIRED ? 'pass' : 'fail',
+      severity: steadyFrames >= steadyNeed ? 'pass' : 'fail',
     };
     const checks = [...baseChecks, holdSteady];
     const allChecksPassed = checks.every((check) => check.passed);
@@ -505,6 +524,7 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
     thresholds.eyeAspectRatioThreshold,
     calculateFaceInOval,
     pdHintOutRef,
+    thresholds.steadyFramesRequired,
   ]);
 
   useEffect(() => {
@@ -553,8 +573,8 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
         localFaceMesh.setOptions({
           maxNumFaces: 1,
           refineLandmarks: true,
-          minDetectionConfidence: 0.55,
-          minTrackingConfidence: 0.55,
+          minDetectionConfidence: isMobile ? 0.45 : 0.55,
+          minTrackingConfidence: isMobile ? 0.45 : 0.55,
         });
 
         localFaceMesh.onResults(processResults);
@@ -610,7 +630,7 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
       }
       faceMeshRef.current = null;
     };
-  }, [isActive, videoRef, processResults]);
+  }, [isActive, videoRef, processResults, isMobile]);
 
   return validationState;
 }
