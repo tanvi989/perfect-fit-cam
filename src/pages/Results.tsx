@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { useCaptureData } from '@/context/CaptureContext';
 import { MeasurementsTab } from '@/components/try-on/MeasurementsTab';
 import { FramesTab } from '@/components/try-on/FramesTab';
+import { PdIrisAdminDebugPanel } from '@/components/try-on/PdIrisAdminDebugPanel';
+import { pickIrisPdSummary } from '@/lib/pdIrisCaptureSummary';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Button } from '@/components/ui/button';
 import { ArrowLeft, Ruler, Glasses, RefreshCw } from 'lucide-react';
@@ -21,6 +23,8 @@ export default function Results() {
   if (!capturedData) {
     return null;
   }
+
+  const irisPdSummary = pickIrisPdSummary(capturedData);
 
   return (
     <div className="min-h-screen bg-background">
@@ -56,6 +60,17 @@ export default function Results() {
 
       {/* Main content */}
       <main className="container max-w-4xl mx-auto">
+        <section
+          className="mx-4 mt-4 rounded-xl border border-amber-500/30 bg-amber-500/[0.04] px-4 py-4"
+          aria-label="PD and iris debug for administrators"
+        >
+          <PdIrisAdminDebugPanel summary={irisPdSummary} variant="page" />
+          <p className="text-[11px] text-muted-foreground mt-3 max-w-4xl">
+            Use this block to compare live preview vs server image and to verify iris diameter (px), which sets the mm/px
+            ruler for PD. Full detail also appears under &quot;Pupillary Distance&quot; on the measurements tab.
+          </p>
+        </section>
+
         <Tabs defaultValue="measurements" className="w-full">
           <TabsList className="w-full grid grid-cols-2 h-14 bg-muted/50 p-1 mx-4 mt-4 rounded-xl">
             <TabsTrigger 
