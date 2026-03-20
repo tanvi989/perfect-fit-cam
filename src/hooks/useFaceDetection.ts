@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import type { FaceLandmarks, FaceValidationState, ValidationCheck } from '@/types/face-validation';
+import {
+  PD_DESKTOP_TARGET_DISTANCE_CM,
+  PD_MOBILE_TARGET_DISTANCE_CM,
+  isMobileCaptureViewport,
+} from '@/lib/pdCaptureDistance';
 
 // MediaPipe Face Mesh landmark indices
 const LANDMARK_INDICES = {
@@ -18,22 +23,20 @@ const LANDMARK_INDICES = {
   faceRight: 454,
 };
 
-// Target working distance (~60 cm): face appears smaller in frame than at ~43 cm.
-// Percent ranges were originally tuned near 43 cm; scale by inverse distance ratio.
-const TARGET_DISTANCE_CM = 60;
+// Percent ranges were tuned around FACE_WIDTH_CALIBRATION_CM; scale by target distance per device.
 const FACE_WIDTH_CALIBRATION_CM = 43;
-const distanceScale = FACE_WIDTH_CALIBRATION_CM / TARGET_DISTANCE_CM;
 
 /** Require ~1s of stable alignment at ~10 FPS face-mesh processing before auto-capture */
 export const PD_STEADY_FRAMES_REQUIRED = 10;
 
-// Note: mobile front cameras often have a narrower FOV than webcams, so the same
-// real-world distance can look "closer" (larger face %) than on desktop.
+// Mobile: shorter target distance (comfortable selfie) + wider % band — phone FOV differs from webcam.
 const getThresholds = (isMobile: boolean) => {
+  const targetDistanceCm = isMobile ? PD_MOBILE_TARGET_DISTANCE_CM : PD_DESKTOP_TARGET_DISTANCE_CM;
+  const distanceScale = FACE_WIDTH_CALIBRATION_CM / targetDistanceCm;
+
   const distance = isMobile
     ? {
         targetFaceWidthPercent: 26 * distanceScale,
-        // Slightly narrower band: too far / too close skews PD in pixels
         minFaceWidthPercent: 21 * distanceScale,
         maxFaceWidthPercent: 36 * distanceScale,
       }
@@ -44,6 +47,7 @@ const getThresholds = (isMobile: boolean) => {
       };
 
   return {
+    targetDistanceCm,
     // Stricter than before: PD errors grow quickly with yaw / tilt / off-center framing
     maxHeadTilt: 6,
     maxHeadRotation: 8,
@@ -70,9 +74,7 @@ interface UseFaceDetectionProps {
 }
 
 export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }: UseFaceDetectionProps) {
-  const isMobile =
-    typeof window !== 'undefined' &&
-    window.matchMedia('(max-width: 767px)').matches;
+  const isMobile = isMobileCaptureViewport();
 
   const thresholdsRef = useRef(getThresholds(isMobile));
   const thresholds = thresholdsRef.current;
@@ -235,7 +237,7 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
         },
         {
           id: 'distance',
-          label: `Distance ~${TARGET_DISTANCE_CM} cm`,
+          label: `Distance ~${thresholds.targetDistanceCm} cm`,
           passed:
             state.faceWidthPercent >= thresholds.minFaceWidthPercent &&
             state.faceWidthPercent <= thresholds.maxFaceWidthPercent,
@@ -244,7 +246,7 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
               ? 'Move a little closer'
               : state.faceWidthPercent > thresholds.maxFaceWidthPercent
                 ? 'Move a little farther'
-                : `About ${TARGET_DISTANCE_CM} cm — good`,
+                : `About ${thresholds.targetDistanceCm} cm — good`,
           severity:
             state.faceWidthPercent >= thresholds.minFaceWidthPercent &&
             state.faceWidthPercent <= thresholds.maxFaceWidthPercent
@@ -330,6 +332,7 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
       thresholds.minBrightness,
       thresholds.minContrast,
       thresholds.minFaceWidthPercent,
+      thresholds.targetDistanceCm,
     ],
   );
 
