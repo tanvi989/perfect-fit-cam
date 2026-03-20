@@ -1,4 +1,6 @@
-const API_BASE = 'https://api.multifolks.aonetech.in';
+import { getCaptureClientInfo } from '@/lib/captureClientInfo';
+
+const API_BASE = 'http://localhost:8000';
 
 // Session management - simple incrementing IDs stored in sessionStorage
 function getSessionIds(): { guestId: string; sessionId: string } {
@@ -34,6 +36,14 @@ export interface LandmarkMeasurements {
   pd: number;
   pd_left: number;
   pd_right: number;
+  pd_hf?: number | null;
+  pd_hf_left?: number | null;
+  pd_hf_right?: number | null;
+  jaw_width?: number;
+  chin_width?: number;
+  chin_to_face_width_ratio?: number;
+  eye_vertical_position_ratio?: number;
+  segment_height_proxy_mm?: number | null;
   nose_bridge_left: number;
   nose_bridge_right: number;
   face_width: number;
@@ -44,12 +54,98 @@ export interface LandmarkMeasurements {
 export interface Scale {
   mm_per_pixel: number;
   iris_diameter_px: number;
+  pd_mm_iris_scale_only?: number;
+  pd_mm_face_scale_only?: number;
+  pd_prior_mm?: number;
+  pd_px_euclidean?: number;
+  face_width_px?: number;
+  pd_reliability?: string;
+  pd_note?: string;
+  pd_client_hint_mm?: number;
+  pd_method?: string;
+  pd_client_hint_ignored_mm?: number;
+  pd_hf_model?: string | null;
+  pd_hf_provenance?: string | null;
+  pd_hf_note?: string | null;
+  pd_hf_error?: string | null;
+  pd_hf_delta_mm?: number | null;
+  pd_hf_px_horizontal?: number | null;
+  pd_hf_ratio_iris?: number | null;
+  pd_hf_method?: string | null;
 }
 
 export interface DebugInfo {
   pd_error_mm: number;
   expected_accuracy: string;
 }
+
+export interface GenderEstimate {
+  label: string;
+  confidence: number;
+  low_confidence?: boolean;
+  model?: string | null;
+  prob_male?: number;
+  prob_female?: number;
+  error?: string;
+}
+
+export interface AgeEstimate {
+  bucket: string;
+  bucket_index?: number | null;
+  confidence: number;
+  low_confidence?: boolean;
+  model?: string | null;
+  provenance?: string | null;
+  error?: string;
+}
+
+export interface EyewearInsights {
+  face_width_bucket: string;
+  face_width_bucket_recommendation?: string;
+  face_width_mm?: number | null;
+  face_height_mm?: number | null;
+  suggested_frame_total_width_mm?: { min: number; max: number };
+  lens_height_guidance?: {
+    label: string;
+    suggested_lens_height_mm_min: number;
+    suggested_lens_height_mm_max: number;
+    explanation: string;
+  };
+  segment_height?: {
+    pupil_to_lower_lid_proxy_mm?: number | null;
+    note?: string;
+    progressives_disclaimer?: string;
+  };
+  eye_vertical_position_ratio?: number | null;
+  chin_to_face_width_ratio?: number | null;
+  pd_reliability?: string;
+  pd_blend_method?: string | null;
+  monocular_asymmetry_mm?: number | null;
+  nose_bridge_asymmetry_mm?: number | null;
+  nose_bridge_proxy_mm?: number | null;
+  catalog_frame_fit?: Array<{
+    id: string;
+    name: string;
+    frame_total_width_mm: number;
+    frame_nose_bridge_mm: number;
+    frame_lens_width_mm: number;
+    width_vs_face: string;
+    width_explanation: string;
+    bridge_vs_estimate: string;
+    bridge_explanation: string;
+    overall_label: string;
+  }>;
+  capture_quality?: { pd_geometry?: string; eyes_open_frontal_hint?: string };
+  features_status?: Record<string, string>;
+  fit_hint?: string;
+  warnings?: string[];
+  style_tips?: string[];
+  disclaimer?: string;
+  age_estimate?: AgeEstimate;
+}
+
+/** Echo + persist: browser / screen / network snapshot from capture time */
+export type ClientCaptureInfo = ReturnType<typeof getCaptureClientInfo>;
 
 export interface LandmarksDetectResponse {
   success: boolean;
@@ -58,6 +154,9 @@ export interface LandmarksDetectResponse {
     mm: LandmarkMeasurements;
     face_shape: string;
     debug: DebugInfo;
+    gender?: GenderEstimate;
+    eyewear?: EyewearInsights;
+    client_capture?: ClientCaptureInfo;
   };
 }
 
@@ -142,12 +241,33 @@ export async function removeGlasses(imageDataUrl: string): Promise<GlassesRemove
   }
 }
 
-export async function detectLandmarks(imageDataUrl: string): Promise<LandmarksDetectResponse> {
+export async function detectLandmarks(
+  imageDataUrl: string,
+  pdHintMm?: number,
+  options?: { genderSourceDataUrl?: string | null },
+): Promise<LandmarksDetectResponse> {
   try {
     const { guestId, sessionId } = getSessionIds();
     const blob = await dataURLtoBlob(imageDataUrl);
     const formData = new FormData();
     formData.append('file', blob, 'capture.jpg');
+    if (pdHintMm != null && Number.isFinite(pdHintMm)) {
+      formData.append('pd_hint_mm', pdHintMm.toFixed(2));
+    }
+    const gSrc = options?.genderSourceDataUrl;
+    if (gSrc && gSrc !== imageDataUrl) {
+      const gBlob = await dataURLtoBlob(gSrc);
+      formData.append('gender_image', gBlob, 'original_for_gender.jpg');
+    }
+
+    try {
+      const clientPayload = JSON.stringify(getCaptureClientInfo());
+      if (clientPayload.length < 16_384) {
+        formData.append('client_capture', clientPayload);
+      }
+    } catch {
+      /* ignore client info in non-browser contexts */
+    }
 
     const response = await fetch(`${API_BASE}/landmarks/detect?guest_id=${guestId}&session_id=${sessionId}`, {
       method: 'POST',

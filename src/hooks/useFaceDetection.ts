@@ -18,34 +18,45 @@ const LANDMARK_INDICES = {
   faceRight: 454,
 };
 
-// Target distance: ~43cm from camera
+// Target working distance (~60 cm): face appears smaller in frame than at ~43 cm.
+// Percent ranges were originally tuned near 43 cm; scale by inverse distance ratio.
+const TARGET_DISTANCE_CM = 60;
+const FACE_WIDTH_CALIBRATION_CM = 43;
+const distanceScale = FACE_WIDTH_CALIBRATION_CM / TARGET_DISTANCE_CM;
+
+/** Require ~1s of stable alignment at ~10 FPS face-mesh processing before auto-capture */
+export const PD_STEADY_FRAMES_REQUIRED = 10;
+
 // Note: mobile front cameras often have a narrower FOV than webcams, so the same
 // real-world distance can look "closer" (larger face %) than on desktop.
 const getThresholds = (isMobile: boolean) => {
   const distance = isMobile
     ? {
-        targetFaceWidthPercent: 26,
-        minFaceWidthPercent: 20,
-        maxFaceWidthPercent: 38, // ✅ FIXED
+        targetFaceWidthPercent: 26 * distanceScale,
+        // Slightly narrower band: too far / too close skews PD in pixels
+        minFaceWidthPercent: 21 * distanceScale,
+        maxFaceWidthPercent: 36 * distanceScale,
       }
     : {
-        targetFaceWidthPercent: 21,
-        minFaceWidthPercent: 18,
-        maxFaceWidthPercent: 24,
+        targetFaceWidthPercent: 21 * distanceScale,
+        minFaceWidthPercent: 18.5 * distanceScale,
+        maxFaceWidthPercent: 23 * distanceScale,
       };
 
   return {
-    maxHeadTilt: 10,
-    maxHeadRotation: 15,
+    // Stricter than before: PD errors grow quickly with yaw / tilt / off-center framing
+    maxHeadTilt: 6,
+    maxHeadRotation: 8,
+    maxEyeYDelta: 0.012,
     ...distance,
     minBrightness: 80,
     maxBrightness: 220,
     minContrast: 0.3,
-    eyeAspectRatioThreshold: 0.01,
+    eyeAspectRatioThreshold: 0.012,
     ovalCenterX: 0.5,
     ovalCenterY: 0.45,
-    maxFaceOffsetX: 0.12,
-    maxFaceOffsetY: 0.15,
+    maxFaceOffsetX: 0.07,
+    maxFaceOffsetY: 0.09,
   };
 };
 
@@ -54,9 +65,11 @@ interface UseFaceDetectionProps {
   videoRef: React.RefObject<HTMLVideoElement>;
   canvasRef: React.RefObject<HTMLCanvasElement>;
   isActive: boolean;
+  /** Smoothed PD hint (mm) from the same MediaPipe geometry as the guide: iris rings + cheek width @ ~145mm. */
+  pdHintOutRef?: React.MutableRefObject<number | null>;
 }
 
-export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetectionProps) {
+export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }: UseFaceDetectionProps) {
   const isMobile =
     typeof window !== 'undefined' &&
     window.matchMedia('(max-width: 767px)').matches;
@@ -79,6 +92,8 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
     rightEyeOpen: false,
     leftEyeAR: 0,
     rightEyeAR: 0,
+    eyeLevelDelta: 0,
+    steadyFrames: 0,
     landmarks: null,
     allChecksPassed: false,
     validationChecks: [],
@@ -87,6 +102,8 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
   const faceMeshRef = useRef<any>(null);
   const animationFrameRef = useRef<number>();
   const lastProcessTime = useRef<number>(0);
+  const pdHintEmaRef = useRef<number | null>(null);
+  const steadyFramesRef = useRef(0);
 
   const extractLandmarks = useCallback((landmarks: any[]): FaceLandmarks => {
     return {
@@ -179,109 +196,142 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
     return { inOval, offsetX, offsetY };
   }, [thresholds.maxFaceOffsetX, thresholds.maxFaceOffsetY, thresholds.ovalCenterX, thresholds.ovalCenterY]);
 
-  const generateValidationChecks = useCallback((state: Omit<FaceValidationState, 'validationChecks' | 'allChecksPassed'> & { faceInOval?: boolean; faceOffsetX?: number; faceOffsetY?: number }): ValidationCheck[] => {
-    const checks: ValidationCheck[] = [
-      {
-        id: 'face-detected',
-        label: 'Face Detection',
-        passed: state.faceDetected && state.faceCount === 1,
-        message: !state.faceDetected
-          ? 'No face detected'
-          : state.faceCount > 1
-            ? 'Multiple faces detected'
-            : 'Face detected',
-        severity: state.faceDetected && state.faceCount === 1 ? 'pass' : 'fail',
-      },
-      {
-        id: 'face-in-oval',
-        label: 'Face in Oval',
-        passed: state.faceInOval === true,
-        message: !state.faceDetected
-          ? 'Position face in oval'
-          : state.faceInOval
-            ? 'Face centered'
-            : (state.faceOffsetX || 0) > 0.05
-              ? 'Move left'
-              : (state.faceOffsetX || 0) < -0.05
-                ? 'Move right'
-                : (state.faceOffsetY || 0) > 0.05
-                  ? 'Move up'
-                  : 'Move down',
-        severity: state.faceInOval ? 'pass' : 'fail',
-      },
-      {
-        id: 'distance',
-        label: 'Distance (~43cm)',
-        passed: state.faceWidthPercent >= thresholds.minFaceWidthPercent &&
-                state.faceWidthPercent <= thresholds.maxFaceWidthPercent,
-        message: state.faceWidthPercent < thresholds.minFaceWidthPercent
-          ? 'Move closer to camera'
-          : state.faceWidthPercent > thresholds.maxFaceWidthPercent
-            ? 'Move back from camera'
-            : 'Perfect distance (~43cm)',
-        severity: state.faceWidthPercent >= thresholds.minFaceWidthPercent &&
-                  state.faceWidthPercent <= thresholds.maxFaceWidthPercent ? 'pass' : 'fail',
-      },
-      {
-        id: 'head-straight',
-        label: 'Head Position',
-        passed: Math.abs(state.headTilt) <= thresholds.maxHeadTilt,
-        message: Math.abs(state.headTilt) <= thresholds.maxHeadTilt
-          ? 'Head is straight'
-          : state.headTilt > 0
-            ? 'Tilt head left'
-            : 'Tilt head right',
-        severity: Math.abs(state.headTilt) <= thresholds.maxHeadTilt ? 'pass' : 'fail',
-      },
-      {
-        id: 'no-rotation',
-        label: 'Face Forward',
-        passed: Math.abs(state.headRotation) <= thresholds.maxHeadRotation,
-        message: Math.abs(state.headRotation) <= thresholds.maxHeadRotation
-          ? 'Facing forward'
-          : state.headRotation > 0
-            ? 'Turn head left'
-            : 'Turn head right',
-        severity: Math.abs(state.headRotation) <= thresholds.maxHeadRotation ? 'pass' : 'fail',
-      },
-      {
-        id: 'lighting',
-        label: 'Lighting',
-        passed: state.brightness >= thresholds.minBrightness &&
-                state.brightness <= thresholds.maxBrightness &&
-                state.contrast >= thresholds.minContrast,
-        message: state.brightness < thresholds.minBrightness
-          ? 'Too dark - add light'
-          : state.brightness > thresholds.maxBrightness
-            ? 'Too bright'
-            : state.contrast < thresholds.minContrast
-              ? 'Reduce shadows'
-              : 'Good lighting',
-        severity: state.brightness >= thresholds.minBrightness &&
-                  state.brightness <= thresholds.maxBrightness &&
-                  state.contrast >= thresholds.minContrast ? 'pass' : 'fail',
-      },
-      {
-        id: 'eyes-open',
-        label: 'Eyes Visible',
-        passed: state.leftEyeOpen && state.rightEyeOpen,
-        message: state.leftEyeOpen && state.rightEyeOpen
-          ? 'Eyes open'
-          : 'Keep eyes open',
-        severity: state.leftEyeOpen && state.rightEyeOpen ? 'pass' : 'fail',
-      },
-    ];
+  /** Geometric checks only — hold-steady is appended in `processResults` */
+  const generateAlignmentChecks = useCallback(
+    (
+      state: Omit<
+        FaceValidationState,
+        'validationChecks' | 'allChecksPassed' | 'steadyFrames'
+      > & { faceInOval?: boolean; faceOffsetX?: number; faceOffsetY?: number },
+    ): ValidationCheck[] => {
+      const checks: ValidationCheck[] = [
+        {
+          id: 'face-detected',
+          label: 'One face visible',
+          passed: state.faceDetected && state.faceCount === 1,
+          message: !state.faceDetected
+            ? 'Show your face to the camera'
+            : state.faceCount > 1
+              ? 'Only one person in frame'
+              : 'OK',
+          severity: state.faceDetected && state.faceCount === 1 ? 'pass' : 'fail',
+        },
+        {
+          id: 'face-in-oval',
+          label: 'Centered in guide',
+          passed: state.faceInOval === true,
+          message: !state.faceDetected
+            ? 'Align with the oval'
+            : state.faceInOval
+              ? 'Centered'
+              : (state.faceOffsetX || 0) > 0.04
+                ? 'Step a bit left'
+                : (state.faceOffsetX || 0) < -0.04
+                  ? 'Step a bit right'
+                  : (state.faceOffsetY || 0) > 0.04
+                    ? 'Raise camera or lower chin'
+                    : 'Lower camera or raise chin',
+          severity: state.faceInOval ? 'pass' : 'fail',
+        },
+        {
+          id: 'distance',
+          label: `Distance ~${TARGET_DISTANCE_CM} cm`,
+          passed:
+            state.faceWidthPercent >= thresholds.minFaceWidthPercent &&
+            state.faceWidthPercent <= thresholds.maxFaceWidthPercent,
+          message:
+            state.faceWidthPercent < thresholds.minFaceWidthPercent
+              ? 'Move a little closer'
+              : state.faceWidthPercent > thresholds.maxFaceWidthPercent
+                ? 'Move a little farther'
+                : `About ${TARGET_DISTANCE_CM} cm — good`,
+          severity:
+            state.faceWidthPercent >= thresholds.minFaceWidthPercent &&
+            state.faceWidthPercent <= thresholds.maxFaceWidthPercent
+              ? 'pass'
+              : 'fail',
+        },
+        {
+          id: 'eyes-level',
+          label: 'Eyes level (PD)',
+          passed: state.eyeLevelDelta <= thresholds.maxEyeYDelta,
+          message:
+            state.eyeLevelDelta <= thresholds.maxEyeYDelta
+              ? 'Irises level'
+              : 'Level your head — don’t tilt (eyes must line up)',
+          severity: state.eyeLevelDelta <= thresholds.maxEyeYDelta ? 'pass' : 'fail',
+        },
+        {
+          id: 'head-straight',
+          label: 'Head not tilted',
+          passed: Math.abs(state.headTilt) <= thresholds.maxHeadTilt,
+          message:
+            Math.abs(state.headTilt) <= thresholds.maxHeadTilt
+              ? 'Head straight'
+              : state.headTilt > 0
+                ? 'Straighten — tilt left ear down slightly'
+                : 'Straighten — tilt right ear down slightly',
+          severity: Math.abs(state.headTilt) <= thresholds.maxHeadTilt ? 'pass' : 'fail',
+        },
+        {
+          id: 'no-rotation',
+          label: 'Facing camera squarely',
+          passed: Math.abs(state.headRotation) <= thresholds.maxHeadRotation,
+          message:
+            Math.abs(state.headRotation) <= thresholds.maxHeadRotation
+              ? 'Facing forward'
+              : state.headRotation > 0
+                ? 'Turn slightly right — nose to center'
+                : 'Turn slightly left — nose to center',
+          severity: Math.abs(state.headRotation) <= thresholds.maxHeadRotation ? 'pass' : 'fail',
+        },
+        {
+          id: 'lighting',
+          label: 'Lighting',
+          passed:
+            state.brightness >= thresholds.minBrightness &&
+            state.brightness <= thresholds.maxBrightness &&
+            state.contrast >= thresholds.minContrast,
+          message:
+            state.brightness < thresholds.minBrightness
+              ? 'Too dark — add light in front'
+              : state.brightness > thresholds.maxBrightness
+                ? 'Too bright — soften light'
+                : state.contrast < thresholds.minContrast
+                  ? 'Reduce harsh shadows on face'
+                  : 'OK',
+          severity:
+            state.brightness >= thresholds.minBrightness &&
+            state.brightness <= thresholds.maxBrightness &&
+            state.contrast >= thresholds.minContrast
+              ? 'pass'
+              : 'fail',
+        },
+        {
+          id: 'eyes-open',
+          label: 'Eyes open & visible',
+          passed: state.leftEyeOpen && state.rightEyeOpen,
+          message:
+            state.leftEyeOpen && state.rightEyeOpen
+              ? 'Eyes visible'
+              : 'Open eyes fully (needed for PD)',
+          severity: state.leftEyeOpen && state.rightEyeOpen ? 'pass' : 'fail',
+        },
+      ];
 
-    return checks;
-  }, [
-    thresholds.maxBrightness,
-    thresholds.maxFaceWidthPercent,
-    thresholds.maxHeadRotation,
-    thresholds.maxHeadTilt,
-    thresholds.minBrightness,
-    thresholds.minContrast,
-    thresholds.minFaceWidthPercent,
-  ]);
+      return checks;
+    },
+    [
+      thresholds.maxBrightness,
+      thresholds.maxEyeYDelta,
+      thresholds.maxFaceWidthPercent,
+      thresholds.maxHeadRotation,
+      thresholds.maxHeadTilt,
+      thresholds.minBrightness,
+      thresholds.minContrast,
+      thresholds.minFaceWidthPercent,
+    ],
+  );
 
   const processResults = useCallback((results: any) => {
     if (!videoRef.current || !canvasRef.current) return;
@@ -292,6 +342,9 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
 
     if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
       smoothedFaceWidthPercentRef.current = null;
+      pdHintEmaRef.current = null;
+      if (pdHintOutRef) pdHintOutRef.current = null;
+      steadyFramesRef.current = 0;
 
       const newState = {
         faceDetected: false,
@@ -305,20 +358,61 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
         rightEyeOpen: false,
         leftEyeAR: 0,
         rightEyeAR: 0,
+        eyeLevelDelta: 0,
         landmarks: null,
       };
 
-      const checks = generateValidationChecks(newState);
+      const baseChecks = generateAlignmentChecks(newState);
+      const holdSteady: ValidationCheck = {
+        id: 'hold-steady',
+        label: 'Hold steady (PD)',
+        passed: false,
+        message: 'Show your face to start alignment',
+        severity: 'fail',
+      };
       setValidationState({
         ...newState,
-        validationChecks: checks,
+        steadyFrames: 0,
+        validationChecks: [...baseChecks, holdSteady],
         allChecksPassed: false,
       });
       return;
     }
 
     const faceCount = results.multiFaceLandmarks.length;
-    const landmarks = extractLandmarks(results.multiFaceLandmarks[0]);
+    const meshLm = results.multiFaceLandmarks[0];
+    const landmarks = extractLandmarks(meshLm);
+
+    // Background PD hint (no UI): IPD_px / face_width_px * 145mm — matches backend focal method.
+    const Wv = video.videoWidth;
+    const Hv = video.videoHeight;
+    if (Wv > 0 && Hv > 0 && meshLm.length >= 478) {
+      const irisMean = (idxs: number[]) => {
+        let sx = 0;
+        let sy = 0;
+        for (const i of idxs) {
+          sx += meshLm[i].x * Wv;
+          sy += meshLm[i].y * Hv;
+        }
+        const n = idxs.length;
+        return { x: sx / n, y: sy / n };
+      };
+      const lIris = irisMean([468, 469, 470, 471, 472]);
+      const rIris = irisMean([473, 474, 475, 476, 477]);
+      const pdPx = Math.hypot(lIris.x - rIris.x, lIris.y - rIris.y);
+      const fwPx = Math.hypot(
+        (meshLm[234].x - meshLm[454].x) * Wv,
+        (meshLm[234].y - meshLm[454].y) * Hv,
+      );
+      if (fwPx > 20 && pdPx > 1) {
+        const knownFaceMm = 145.0;
+        const pdMm = pdPx * (knownFaceMm / fwPx);
+        const prev = pdHintEmaRef.current;
+        const smoothed = prev == null ? pdMm : prev * 0.82 + pdMm * 0.18;
+        pdHintEmaRef.current = smoothed;
+        if (pdHintOutRef) pdHintOutRef.current = smoothed;
+      }
+    }
 
     const headTilt = calculateHeadTilt(landmarks);
     const headRotation = calculateHeadRotation(landmarks);
@@ -342,6 +436,7 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
 
     // Check if face is in oval
     const { inOval, offsetX, offsetY } = calculateFaceInOval(landmarks);
+    const eyeLevelDelta = Math.abs(landmarks.leftEye.y - landmarks.rightEye.y);
 
     const newState = {
       faceDetected: true,
@@ -355,17 +450,42 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
       rightEyeOpen,
       leftEyeAR,
       rightEyeAR,
+      eyeLevelDelta,
       landmarks,
       faceInOval: inOval,
       faceOffsetX: offsetX,
       faceOffsetY: offsetY,
     };
 
-    const checks = generateValidationChecks(newState);
-    const allChecksPassed = checks.every(check => check.passed);
+    const baseChecks = generateAlignmentChecks(newState);
+    const geometricPass = baseChecks.every((check) => check.passed);
+    if (geometricPass) {
+      steadyFramesRef.current = Math.min(
+        PD_STEADY_FRAMES_REQUIRED,
+        steadyFramesRef.current + 1,
+      );
+    } else {
+      steadyFramesRef.current = 0;
+    }
+    const steadyFrames = steadyFramesRef.current;
+    const holdSteady: ValidationCheck = {
+      id: 'hold-steady',
+      label: 'Hold steady (PD)',
+      passed: steadyFrames >= PD_STEADY_FRAMES_REQUIRED,
+      message:
+        steadyFrames >= PD_STEADY_FRAMES_REQUIRED
+          ? 'Locked — capturing…'
+          : geometricPass
+            ? `Hold still (${steadyFrames}/${PD_STEADY_FRAMES_REQUIRED})`
+            : 'Fix alignment first',
+      severity: steadyFrames >= PD_STEADY_FRAMES_REQUIRED ? 'pass' : 'fail',
+    };
+    const checks = [...baseChecks, holdSteady];
+    const allChecksPassed = checks.every((check) => check.passed);
 
     setValidationState({
       ...newState,
+      steadyFrames,
       validationChecks: checks,
       allChecksPassed,
     });
@@ -378,9 +498,10 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
     calculateHeadRotation,
     calculateFaceWidthPercent,
     calculateEyeAspectRatio,
-    generateValidationChecks,
+    generateAlignmentChecks,
     thresholds.eyeAspectRatioThreshold,
     calculateFaceInOval,
+    pdHintOutRef,
   ]);
 
   useEffect(() => {
@@ -427,10 +548,10 @@ export function useFaceDetection({ videoRef, canvasRef, isActive }: UseFaceDetec
         });
 
         localFaceMesh.setOptions({
-          maxNumFaces: 2,
+          maxNumFaces: 1,
           refineLandmarks: true,
-          minDetectionConfidence: 0.5,
-          minTrackingConfidence: 0.5,
+          minDetectionConfidence: 0.55,
+          minTrackingConfidence: 0.55,
         });
 
         localFaceMesh.onResults(processResults);

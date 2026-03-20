@@ -34,6 +34,10 @@ export interface FaceValidationState {
   rightEyeOpen: boolean;
   leftEyeAR: number; // eye aspect ratio for debugging
   rightEyeAR: number; // eye aspect ratio for debugging
+  /** |left iris y − right iris y| in normalized landmark space (0–1); low = level eyes for PD */
+  eyeLevelDelta: number;
+  /** Frames in a row with geometric PD checks passing; must reach steady target to capture */
+  steadyFrames: number;
   landmarks: FaceLandmarks | null;
   allChecksPassed: boolean;
   validationChecks: ValidationCheck[];
@@ -80,6 +84,18 @@ export interface ApiMeasurements {
   pd: number;
   pd_left: number;
   pd_right: number;
+  /** Second opinion: InsightFace 2d106 ONNX (Hugging Face); same iris mm/px ruler as primary */
+  pd_hf?: number | null;
+  pd_hf_left?: number | null;
+  pd_hf_right?: number | null;
+  jaw_width?: number;
+  chin_width?: number;
+  /** Chin width / bizygomatic width — style / jaw hints */
+  chin_to_face_width_ratio?: number;
+  /** ~0–1: iris height between forehead and chin landmarks (frontal photo) */
+  eye_vertical_position_ratio?: number;
+  /** Pupil → lower eyelid proxy mm (not clinical segment height) */
+  segment_height_proxy_mm?: number | null;
   nose_bridge_left: number;
   nose_bridge_right: number;
   face_width: number;
@@ -90,6 +106,26 @@ export interface ApiMeasurements {
 export interface ApiScale {
   mm_per_pixel: number;
   iris_diameter_px: number;
+  /** Same iris geometry as primary, but iris-diameter scale only (no face blend / prior / hint). */
+  pd_mm_iris_scale_only?: number;
+  /** IPD if we assumed 145 mm bizygomatic width (weak prior). */
+  pd_mm_face_scale_only?: number;
+  /** IPD from anthropometric prior ∝ face width (iris-scaled). */
+  pd_prior_mm?: number;
+  pd_note?: string;
+  pd_reliability?: string;
+  pd_client_hint_mm?: number;
+  pd_method?: string;
+  pd_client_hint_ignored_mm?: number;
+  pd_hf_model?: string | null;
+  pd_hf_provenance?: string | null;
+  pd_hf_note?: string | null;
+  pd_hf_error?: string | null;
+  pd_hf_delta_mm?: number | null;
+  pd_hf_px_horizontal?: number | null;
+  pd_hf_ratio_iris?: number | null;
+  /** eye_band_bicentric, ratio_matched_pair, or combined after fallback */
+  pd_hf_method?: string | null;
 }
 
 export interface ApiDebug {
@@ -97,11 +133,92 @@ export interface ApiDebug {
   expected_accuracy: string;
 }
 
+export interface ApiGenderEstimate {
+  label: string;
+  confidence: number;
+  low_confidence?: boolean;
+  model?: string | null;
+  prob_male?: number;
+  prob_female?: number;
+  error?: string;
+}
+
+/** Adience-style age bucket from Hugging Face `onnxmodelzoo/age_googlenet` ONNX */
+export interface ApiAgeEstimate {
+  bucket: string;
+  bucket_index?: number | null;
+  confidence: number;
+  low_confidence?: boolean;
+  model?: string | null;
+  provenance?: string | null;
+  error?: string;
+}
+
+export interface ApiLensHeightGuidance {
+  label: string;
+  suggested_lens_height_mm_min: number;
+  suggested_lens_height_mm_max: number;
+  explanation: string;
+}
+
+export interface ApiSegmentHeightBlock {
+  pupil_to_lower_lid_proxy_mm?: number | null;
+  note?: string;
+  progressives_disclaimer?: string;
+}
+
+export interface ApiCatalogFrameFit {
+  id: string;
+  name: string;
+  frame_total_width_mm: number;
+  frame_nose_bridge_mm: number;
+  frame_lens_width_mm: number;
+  width_vs_face: string;
+  width_explanation: string;
+  bridge_vs_estimate: string;
+  bridge_explanation: string;
+  overall_label: string;
+}
+
+export interface ApiEyewearInsights {
+  face_width_bucket: string;
+  face_width_bucket_recommendation?: string;
+  face_width_mm?: number | null;
+  face_height_mm?: number | null;
+  suggested_frame_total_width_mm?: { min: number; max: number };
+  lens_height_guidance?: ApiLensHeightGuidance;
+  segment_height?: ApiSegmentHeightBlock;
+  eye_vertical_position_ratio?: number | null;
+  chin_to_face_width_ratio?: number | null;
+  pd_reliability?: string;
+  pd_blend_method?: string | null;
+  monocular_asymmetry_mm?: number | null;
+  nose_bridge_asymmetry_mm?: number | null;
+  nose_bridge_proxy_mm?: number | null;
+  catalog_frame_fit?: ApiCatalogFrameFit[];
+  capture_quality?: {
+    pd_geometry?: string;
+    eyes_open_frontal_hint?: string;
+  };
+  features_status?: Record<string, string>;
+  fit_hint?: string;
+  warnings?: string[];
+  style_tips?: string[];
+  disclaimer?: string;
+  age_estimate?: ApiAgeEstimate;
+}
+
+/** Browser / device / network snapshot at capture (from client, echoed by API). */
+export type ApiClientCapture = import('@/lib/captureClientInfo').CaptureClientInfo;
+
 export interface ApiLandmarks {
   scale: ApiScale;
   mm: ApiMeasurements;
   face_shape: string;
   debug: ApiDebug;
+  gender?: ApiGenderEstimate;
+  eyewear?: ApiEyewearInsights;
+  client_capture?: ApiClientCapture;
 }
 
 export interface RegionPoint {
@@ -122,7 +239,7 @@ export interface ApiRegionPoints {
 
 export interface ApiLandmarksResponse {
   success: boolean;
-  landmarks: ApiLandmarks;
+  landmarks: ApiLandmarks & { eyewear?: ApiEyewearInsights };
 }
 
 export interface CapturedData {
@@ -132,6 +249,9 @@ export interface CapturedData {
   landmarks: FaceLandmarks;
   measurements: ApiMeasurements;
   faceShape: string;
+  gender?: ApiGenderEstimate;
+  eyewear?: ApiEyewearInsights;
+  clientCapture?: ApiClientCapture;
   apiResponse?: ApiLandmarksResponse; // Full API response
   timestamp: number;
 }

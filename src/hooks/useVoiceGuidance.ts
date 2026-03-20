@@ -66,17 +66,29 @@ export function useVoiceGuidance(options: VoiceGuidanceOptions = {}) {
     const cardCheck = validationChecks.find(c => c.id === 'credit-card');
 
     // Speak the most important failed check
+    const ovalCheck = validationChecks.find((c) => c.id === 'face-in-oval');
+    if (ovalCheck && !ovalCheck.passed) {
+      speak('Center your face in the oval');
+      return;
+    }
+
     if (distanceCheck && !distanceCheck.passed) {
       if (distanceCheck.message.includes('closer')) {
-        speak('Please move closer to the camera');
-      } else if (distanceCheck.message.includes('back')) {
-        speak('Please move back from the camera');
+        speak('Please move a little closer to the camera');
+      } else if (distanceCheck.message.includes('farther') || distanceCheck.message.includes('back')) {
+        speak('Please move a little farther from the camera');
       }
       return;
     }
 
+    const eyesLevelCheck = validationChecks.find((c) => c.id === 'eyes-level');
+    if (eyesLevelCheck && !eyesLevelCheck.passed) {
+      speak('Level your head so both eyes line up horizontally');
+      return;
+    }
+
     if (positionCheck && !positionCheck.passed) {
-      speak('Please center your face in the oval guide');
+      speak('Please show one face clearly to the camera');
       return;
     }
 

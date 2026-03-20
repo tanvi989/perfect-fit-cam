@@ -1,7 +1,7 @@
 import { useRef, useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useCamera } from '@/hooks/useCamera';
-import { useFaceDetection } from '@/hooks/useFaceDetection';
+import { useFaceDetection, PD_STEADY_FRAMES_REQUIRED } from '@/hooks/useFaceDetection';
 import { useCaptureData } from '@/context/CaptureContext';
 import { useVoiceGuidance } from '@/hooks/useVoiceGuidance';
 import { CameraPermission } from './CameraPermission';
@@ -21,6 +21,7 @@ export function CaptureCamera() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingStep, setProcessingStep] = useState('');
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
+  const pdHintMmRef = useRef<number | null>(null);
   const { setCapturedData } = useCaptureData();
   const { speakGuidance, speak, cancel: cancelVoice } = useVoiceGuidance({ enabled: true, debounceMs: 3000 });
 
@@ -28,6 +29,7 @@ export function CaptureCamera() {
     videoRef,
     canvasRef,
     isActive: cameraState === 'granted' && !isCapturing && !isProcessing,
+    pdHintOutRef: pdHintMmRef,
   });
 
   // All checks passed - just face validation now
@@ -134,7 +136,14 @@ export function CaptureCamera() {
 
       // Step 3: Get measurements from API
       setProcessingStep('Measuring face dimensions...');
-      const measureResult = await detectLandmarks(processedImageDataUrl);
+      const hint = pdHintMmRef.current;
+      const measureResult = await detectLandmarks(
+        processedImageDataUrl,
+        hint != null && Number.isFinite(hint) ? hint : undefined,
+        glassesDetected
+          ? { genderSourceDataUrl: imageDataUrl }
+          : undefined,
+      );
 
       if (!measureResult.success || !measureResult.landmarks?.mm) {
         throw new Error('Failed to get measurements');
@@ -148,6 +157,9 @@ export function CaptureCamera() {
         landmarks: faceValidationState.landmarks,
         measurements: measureResult.landmarks.mm,
         faceShape: measureResult.landmarks.face_shape,
+        gender: measureResult.landmarks.gender,
+        eyewear: measureResult.landmarks.eyewear,
+        clientCapture: measureResult.landmarks.client_capture,
         apiResponse: measureResult,
         timestamp: Date.now(),
       });
@@ -160,7 +172,7 @@ export function CaptureCamera() {
       setCountdown(null);
       setIsProcessing(false);
     }
-  }, [videoRef, faceValidationState.landmarks, setCapturedData, navigate, speak]);
+  }, [videoRef, faceValidationState.landmarks, setCapturedData, navigate, speak, pdHintMmRef]);
 
   // Auto-capture countdown when all checks pass
   useEffect(() => {
@@ -234,6 +246,12 @@ export function CaptureCamera() {
           headTilt: faceValidationState.headTilt,
           headRotation: faceValidationState.headRotation,
           brightness: faceValidationState.brightness,
+          eyeLevelDelta: faceValidationState.eyeLevelDelta,
+          steadyFrames: faceValidationState.steadyFrames,
+          steadyRequired: PD_STEADY_FRAMES_REQUIRED,
+          maxHeadTilt: 6,
+          maxHeadRotation: 8,
+          maxEyeYDelta: 0.012,
         }}
       />
 
