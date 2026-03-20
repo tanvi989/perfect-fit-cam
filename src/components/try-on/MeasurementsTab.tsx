@@ -4,6 +4,7 @@ import type {
   ApiEmotionEstimate,
   ApiEyewearInsights,
   ApiGenderEstimate,
+  LivePdGeometryDebug,
 } from '@/types/face-validation';
 import {
   Ruler,
@@ -88,6 +89,120 @@ function pickClientCapture(data: {
   return c;
 }
 
+function pickLivePdDebug(data: { livePdDebug?: LivePdGeometryDebug | null }): LivePdGeometryDebug | null {
+  const l = data.livePdDebug;
+  if (!l || typeof l !== 'object') return null;
+  return l;
+}
+
+/** Iris positions + IPD px for the three summary lines above PD (live preview or server decoded image). */
+type IrisPdSummary = {
+  detected: boolean;
+  source: 'live_preview' | 'server_image' | null;
+  left: { x: number; y: number } | null;
+  right: { x: number; y: number } | null;
+  distancePx: number | null;
+  /** Converts pixel chords in the capture plane → mm; divide by 10 for cm (iris-scale for live, API scale for server). */
+  mmPerPixel: number | null;
+};
+
+function parseTraceIrisCenter(raw: unknown): { x: number; y: number } | null {
+  if (Array.isArray(raw) && raw.length >= 2) {
+    const x = Number(raw[0]);
+    const y = Number(raw[1]);
+    if (Number.isFinite(x) && Number.isFinite(y)) return { x, y };
+  }
+  return null;
+}
+
+function pickIrisPdSummary(capturedData: {
+  livePdDebug?: LivePdGeometryDebug | null;
+  apiResponse?: {
+    landmarks?: {
+      debug?: {
+        pd_calculation_trace?: {
+          pixels?: Record<string, unknown>;
+          intermediate_mm?: Record<string, unknown>;
+        };
+      };
+      scale?: {
+        mm_per_pixel?: number | null;
+        pd_px_used?: number | null;
+        pd_px_euclidean?: number | null;
+        pd_px_euclidean_raw?: number | null;
+      };
+    };
+  };
+}): IrisPdSummary {
+  const live = capturedData.livePdDebug;
+  if (live) {
+    return {
+      detected: true,
+      source: 'live_preview',
+      left: { x: live.leftIrisCenterPx.x, y: live.leftIrisCenterPx.y },
+      right: { x: live.rightIrisCenterPx.x, y: live.rightIrisCenterPx.y },
+      distancePx: live.pdPxUsed,
+      mmPerPixel: Number.isFinite(live.sIrisMmPerPx) ? live.sIrisMmPerPx : null,
+    };
+  }
+
+  const pixels = capturedData.apiResponse?.landmarks?.debug?.pd_calculation_trace?.pixels as
+    | Record<string, unknown>
+    | undefined;
+  const intermediate = capturedData.apiResponse?.landmarks?.debug?.pd_calculation_trace?.intermediate_mm as
+    | Record<string, unknown>
+    | undefined;
+  const left = pixels ? parseTraceIrisCenter(pixels.left_iris_center) : null;
+  const right = pixels ? parseTraceIrisCenter(pixels.right_iris_center) : null;
+  const sc = capturedData.apiResponse?.landmarks?.scale;
+  let distancePx: number | null = null;
+  if (sc?.pd_px_used != null && Number.isFinite(Number(sc.pd_px_used))) {
+    distancePx = Number(sc.pd_px_used);
+  } else if (pixels != null && typeof pixels.pd_px_used === 'number' && Number.isFinite(pixels.pd_px_used)) {
+    distancePx = pixels.pd_px_used;
+  } else if (sc?.pd_px_euclidean_raw != null && Number.isFinite(Number(sc.pd_px_euclidean_raw))) {
+    distancePx = Number(sc.pd_px_euclidean_raw);
+  } else if (sc?.pd_px_euclidean != null && Number.isFinite(Number(sc.pd_px_euclidean))) {
+    distancePx = Number(sc.pd_px_euclidean);
+  } else if (pixels != null && typeof pixels.pd_px_euclidean === 'number' && Number.isFinite(pixels.pd_px_euclidean)) {
+    distancePx = pixels.pd_px_euclidean;
+  }
+
+  let mmPerPixel: number | null = null;
+  if (sc?.mm_per_pixel != null && Number.isFinite(Number(sc.mm_per_pixel))) {
+    mmPerPixel = Number(sc.mm_per_pixel);
+  } else if (
+    intermediate != null &&
+    typeof intermediate.s_iris_mm_per_px === 'number' &&
+    Number.isFinite(intermediate.s_iris_mm_per_px)
+  ) {
+    mmPerPixel = intermediate.s_iris_mm_per_px;
+  }
+
+  if (left && right) {
+    if (distancePx == null) {
+      distancePx = Math.hypot(right.x - left.x, right.y - left.y);
+    }
+    return {
+      detected: true,
+      source: 'server_image',
+      left,
+      right,
+      distancePx,
+      mmPerPixel,
+    };
+  }
+
+  return {
+    detected: false,
+    source: null,
+    left,
+    right,
+    distancePx,
+    mmPerPixel,
+  };
+}
+
 export function MeasurementsTab() {
   const { capturedData } = useCaptureData();
 
@@ -104,6 +219,8 @@ export function MeasurementsTab() {
   const emotion = pickEmotionEstimate(capturedData);
   const eyewear = pickEyewear(capturedData);
   const clientCapture = pickClientCapture(capturedData);
+  const livePdStored = pickLivePdDebug(capturedData);
+  const irisPdSummary = pickIrisPdSummary(capturedData);
 
   // Helper to safely format numbers
   const formatMeasurement = (value: number | undefined, decimals: number = 1): string => {
@@ -184,6 +301,137 @@ export function MeasurementsTab() {
         </CardHeader>
         <CardContent>
           <div className="text-center py-4">
+            <div className="text-left max-w-lg mx-auto mb-4 rounded-md border border-border/70 bg-muted/30 px-3 py-2.5 text-sm leading-relaxed">
+              <p>
+                <span className="text-muted-foreground">Iris detected:</span>{' '}
+                <span className="font-semibold text-foreground">
+                  {irisPdSummary.detected ? 'Yes' : 'No'}
+                </span>
+                {irisPdSummary.source === 'live_preview' && (
+                  <span className="text-muted-foreground text-xs ml-1">(live preview)</span>
+                )}
+                {irisPdSummary.source === 'server_image' && (
+                  <span className="text-muted-foreground text-xs ml-1">(server image)</span>
+                )}
+              </p>
+              <p className="mt-1">
+                <span className="text-muted-foreground">Iris left at</span>{' '}
+                {irisPdSummary.left ? (
+                  <>
+                    x ={' '}
+                    <span className="font-mono tabular-nums text-foreground">{irisPdSummary.left.x.toFixed(1)}</span> px, y
+                    ={' '}
+                    <span className="font-mono tabular-nums text-foreground">{irisPdSummary.left.y.toFixed(1)}</span> px
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+                <span className="text-muted-foreground"> · Iris right at</span>{' '}
+                {irisPdSummary.right ? (
+                  <>
+                    x ={' '}
+                    <span className="font-mono tabular-nums text-foreground">{irisPdSummary.right.x.toFixed(1)}</span> px, y
+                    ={' '}
+                    <span className="font-mono tabular-nums text-foreground">{irisPdSummary.right.y.toFixed(1)}</span> px
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </p>
+              <p className="mt-1">
+                <span className="text-muted-foreground">Distance between irises:</span>{' '}
+                {irisPdSummary.distancePx != null && Number.isFinite(irisPdSummary.distancePx) ? (
+                  <>
+                    <span className="font-mono font-semibold tabular-nums text-foreground">
+                      {irisPdSummary.distancePx.toFixed(2)}
+                    </span>{' '}
+                    px
+                  </>
+                ) : (
+                  <span className="text-muted-foreground">—</span>
+                )}
+              </p>
+            </div>
+
+            {(() => {
+              const mm = irisPdSummary.mmPerPixel;
+              const cmPerPx = mm != null && Number.isFinite(mm) ? mm / 10 : null;
+              const fmtCm = (px: number | null | undefined) => {
+                if (px == null || !Number.isFinite(px) || cmPerPx == null) return null;
+                return (px * cmPerPx).toFixed(2);
+              };
+              const dCm =
+                irisPdSummary.distancePx != null &&
+                Number.isFinite(irisPdSummary.distancePx) &&
+                cmPerPx != null
+                  ? (irisPdSummary.distancePx * cmPerPx).toFixed(2)
+                  : null;
+              return (
+                <div className="text-left max-w-lg mx-auto mb-4 rounded-md border border-border/70 bg-muted/20 px-3 py-2.5 text-sm leading-relaxed">
+                  <p>
+                    <span className="text-muted-foreground">Iris detected:</span>{' '}
+                    <span className="font-semibold text-foreground">
+                      {irisPdSummary.detected ? 'Yes' : 'No'}
+                    </span>
+                    {irisPdSummary.source === 'live_preview' && (
+                      <span className="text-muted-foreground text-xs ml-1">(live preview)</span>
+                    )}
+                    {irisPdSummary.source === 'server_image' && (
+                      <span className="text-muted-foreground text-xs ml-1">(server image)</span>
+                    )}
+                  </p>
+                  <p className="mt-1">
+                    <span className="text-muted-foreground">Iris left at</span>{' '}
+                    {irisPdSummary.left && fmtCm(irisPdSummary.left.x) != null ? (
+                      <>
+                        x ={' '}
+                        <span className="font-mono tabular-nums text-foreground">
+                          {fmtCm(irisPdSummary.left.x)}
+                        </span>{' '}
+                        cm, y ={' '}
+                        <span className="font-mono tabular-nums text-foreground">
+                          {fmtCm(irisPdSummary.left.y)}
+                        </span>{' '}
+                        cm
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                    <span className="text-muted-foreground"> · Iris right at</span>{' '}
+                    {irisPdSummary.right && fmtCm(irisPdSummary.right.x) != null ? (
+                      <>
+                        x ={' '}
+                        <span className="font-mono tabular-nums text-foreground">
+                          {fmtCm(irisPdSummary.right.x)}
+                        </span>{' '}
+                        cm, y ={' '}
+                        <span className="font-mono tabular-nums text-foreground">
+                          {fmtCm(irisPdSummary.right.y)}
+                        </span>{' '}
+                        cm
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </p>
+                  <p className="mt-1">
+                    <span className="text-muted-foreground">Distance between irises:</span>{' '}
+                    {dCm != null ? (
+                      <>
+                        <span className="font-mono font-semibold tabular-nums text-foreground">{dCm}</span> cm
+                      </>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </p>
+                  <p className="text-[10px] text-muted-foreground mt-1.5">
+                    cm values use the iris-scale mm/px from the preview (live) or the API image (server); they describe
+                    distances in the photo plane, not “cm from the lens.”
+                  </p>
+                </div>
+              );
+            })()}
+
             <div className="text-5xl font-bold text-primary">
               {formatMeasurement(measurements?.pd)}
               <span className="text-2xl font-normal text-muted-foreground ml-1">mm</span>
@@ -196,6 +444,61 @@ export function MeasurementsTab() {
                 {capturedData.apiResponse.landmarks.scale.pd_note}
               </p>
             )}
+            {livePdStored && (
+              <div className="mt-4 rounded-lg border border-amber-500/35 bg-amber-500/[0.06] px-3 py-2 text-left max-w-lg mx-auto">
+                <p className="text-xs font-semibold text-amber-900 dark:text-amber-100 mb-1">
+                  Live preview at shutter (camera video — px)
+                </p>
+                <p className="text-[11px] text-muted-foreground leading-relaxed mb-2">
+                  Saved from the last aligned frame before capture. The API row below uses the uploaded JPEG; resolution
+                  and framing can differ slightly.
+                </p>
+                <dl className="grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 text-xs">
+                  <dt className="text-muted-foreground">Video frame</dt>
+                  <dd className="font-mono text-right tabular-nums">
+                    {livePdStored.videoWidth}×{livePdStored.videoHeight}
+                  </dd>
+                  <dt className="text-muted-foreground">L / R iris Ø (px)</dt>
+                  <dd className="font-mono text-right tabular-nums">
+                    {livePdStored.irisDiameterLeftPx.toFixed(2)} / {livePdStored.irisDiameterRightPx.toFixed(2)} (μ{' '}
+                    {livePdStored.irisDiameterMeanPx.toFixed(2)})
+                  </dd>
+                  <dt className="text-muted-foreground">Iris centres (x, y) px</dt>
+                  <dd className="font-mono text-right tabular-nums text-[10px]">
+                    L {livePdStored.leftIrisCenterPx.x.toFixed(1)},{livePdStored.leftIrisCenterPx.y.toFixed(1)} · R{' '}
+                    {livePdStored.rightIrisCenterPx.x.toFixed(1)},{livePdStored.rightIrisCenterPx.y.toFixed(1)}
+                  </dd>
+                  <dt className="text-muted-foreground">IPD px H / E / used</dt>
+                  <dd className="font-mono text-right tabular-nums">
+                    {livePdStored.pdPxHorizontal.toFixed(2)} / {livePdStored.pdPxEuclidean.toFixed(2)} /{' '}
+                    <span className="font-semibold">{livePdStored.pdPxUsed.toFixed(2)}</span>
+                  </dd>
+                  <dt className="text-muted-foreground">Geometry · cheek W px</dt>
+                  <dd className="text-right text-[11px]">
+                    {livePdStored.pdGeometry} · {livePdStored.faceWidthCheekPx.toFixed(1)}
+                  </dd>
+                  <dt className="text-muted-foreground">s_iris / s_face (mm/px)</dt>
+                  <dd className="font-mono text-right text-[10px]">
+                    {livePdStored.sIrisMmPerPx.toFixed(4)} / {livePdStored.sFaceMmPerPx.toFixed(4)}
+                  </dd>
+                  <dt className="text-muted-foreground">Preview mm (iris / face ruler)</dt>
+                  <dd className="font-mono text-right tabular-nums">
+                    {livePdStored.pdMmIrisScaleOnly.toFixed(2)} / {livePdStored.pdMmFaceScaleOnly.toFixed(2)}
+                  </dd>
+                  <dt className="text-muted-foreground">IPD/Ø ratio</dt>
+                  <dd className="font-mono text-right">
+                    {livePdStored.ipdOverIrisDiam.toFixed(2)} {livePdStored.pdRatioOk ? '✓' : '⚠'}
+                  </dd>
+                </dl>
+                {capturedData.pdHintMmSent != null && (
+                  <p className="text-[11px] text-muted-foreground mt-2">
+                    pd_hint sent:{' '}
+                    <span className="font-mono text-foreground">{capturedData.pdHintMmSent.toFixed(1)} mm</span>
+                  </p>
+                )}
+              </div>
+            )}
+
             {(() => {
               const sc = capturedData.apiResponse?.landmarks?.scale;
               if (!sc || (sc.pd_px_used == null && sc.pd_px_horizontal == null)) return null;
@@ -203,7 +506,7 @@ export function MeasurementsTab() {
                 n != null && Number.isFinite(n) ? n.toFixed(1) : '—';
               return (
                 <div className="mt-4 rounded-lg border border-border/80 bg-muted/40 px-3 py-2 text-left max-w-md mx-auto">
-                  <p className="text-xs font-medium text-foreground mb-1.5">Iris IPD in this photo (pixels)</p>
+                  <p className="text-xs font-medium text-foreground mb-1.5">Server: iris IPD in uploaded photo (pixels)</p>
                   <p className="text-[11px] text-muted-foreground leading-relaxed">
                     Values are in <span className="text-foreground/90">image pixels</span> at capture resolution
                     — they change with distance/zoom; mm PD uses these together with iris size.

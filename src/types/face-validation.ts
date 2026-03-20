@@ -1,3 +1,5 @@
+import type { LivePdGeometryDebug } from '@/lib/irisGeometry';
+
 export interface FaceLandmarks {
   leftEye: { x: number; y: number; z: number };
   rightEye: { x: number; y: number; z: number };
@@ -22,6 +24,8 @@ export interface ValidationCheck {
   severity: 'pass' | 'warning' | 'fail';
 }
 
+export type { LivePdGeometryDebug };
+
 export interface FaceValidationState {
   faceDetected: boolean;
   faceCount: number;
@@ -39,6 +43,8 @@ export interface FaceValidationState {
   /** Frames in a row with geometric PD checks passing; must reach steady target to capture */
   steadyFrames: number;
   landmarks: FaceLandmarks | null;
+  /** Full-res iris PD geometry (matches server math); null when no face / no iris model */
+  livePdDebug: LivePdGeometryDebug | null;
   allChecksPassed: boolean;
   validationChecks: ValidationCheck[];
 }
@@ -287,5 +293,9 @@ export interface CapturedData {
   eyewear?: ApiEyewearInsights;
   clientCapture?: ApiClientCapture;
   apiResponse?: ApiLandmarksResponse; // Full API response
+  /** Last live iris/IPD geometry from the camera preview (video px) — compare to API `scale` on the uploaded image */
+  livePdDebug?: LivePdGeometryDebug | null;
+  /** PD hint (mm) sent with `/landmarks/detect` for this capture, if any */
+  pdHintMmSent?: number | null;
   timestamp: number;
 }

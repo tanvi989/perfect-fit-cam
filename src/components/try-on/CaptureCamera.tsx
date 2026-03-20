@@ -10,8 +10,9 @@ import { FaceGuideOverlay } from './FaceGuideOverlay';
 import { Loader2, Camera } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { detectGlasses, removeGlasses, detectLandmarks } from '@/services/glassesApi';
-import { logPdCalculationTraceToConsole } from '@/lib/pdTraceConsole';
+import { logPdSnapReport } from '@/lib/pdTraceConsole';
 import { toast } from 'sonner';
+import type { LivePdGeometryDebug } from '@/lib/irisGeometry';
 
 export function CaptureCamera() {
   const navigate = useNavigate();
@@ -25,6 +26,7 @@ export function CaptureCamera() {
   const [processingStep, setProcessingStep] = useState('');
   const countdownRef = useRef<NodeJS.Timeout | null>(null);
   const pdHintMmRef = useRef<number | null>(null);
+  const livePdDebugRef = useRef<LivePdGeometryDebug | null>(null);
   const { setCapturedData } = useCaptureData();
   const { speakGuidance, speak, cancel: cancelVoice } = useVoiceGuidance({ enabled: true, debounceMs: 3000 });
 
@@ -33,6 +35,7 @@ export function CaptureCamera() {
     canvasRef,
     isActive: cameraState === 'granted' && !isCapturing && !isProcessing,
     pdHintOutRef: pdHintMmRef,
+    livePdDebugOutRef: livePdDebugRef,
   });
 
   // All checks passed - just face validation now
@@ -96,6 +99,18 @@ export function CaptureCamera() {
     };
   }, [videoRef, cameraState]);
 
+  const [layoutSize, setLayoutSize] = useState({ w: 0, h: 0 });
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => {
+      setLayoutSize({ w: el.clientWidth, h: el.clientHeight });
+    });
+    ro.observe(el);
+    setLayoutSize({ w: el.clientWidth, h: el.clientHeight });
+    return () => ro.disconnect();
+  }, [cameraState]);
+
   // Capture and process image
   const captureAndProcess = useCallback(async () => {
     const video = videoRef.current;
@@ -154,7 +169,8 @@ export function CaptureCamera() {
         );
       }
 
-      logPdCalculationTraceToConsole(measureResult.landmarks);
+      const liveSnap = livePdDebugRef.current;
+      logPdSnapReport(liveSnap, hint ?? null, measureResult.landmarks);
 
       // Save data and navigate - include full API landmarks response
       setCapturedData({
@@ -169,6 +185,14 @@ export function CaptureCamera() {
         eyewear: measureResult.landmarks.eyewear,
         clientCapture: measureResult.landmarks.client_capture,
         apiResponse: measureResult,
+        livePdDebug: liveSnap
+          ? {
+              ...liveSnap,
+              leftIrisCenterPx: { ...liveSnap.leftIrisCenterPx },
+              rightIrisCenterPx: { ...liveSnap.rightIrisCenterPx },
+            }
+          : null,
+        pdHintMmSent: hint != null && Number.isFinite(hint) ? hint : null,
         timestamp: Date.now(),
       });
 
@@ -182,7 +206,7 @@ export function CaptureCamera() {
       setCountdown(null);
       setIsProcessing(false);
     }
-  }, [videoRef, faceValidationState.landmarks, setCapturedData, navigate, speak, pdHintMmRef]);
+  }, [videoRef, faceValidationState.landmarks, setCapturedData, navigate, speak, pdHintMmRef, livePdDebugRef]);
 
   // Auto-capture countdown when all checks pass
   useEffect(() => {
@@ -281,6 +305,10 @@ export function CaptureCamera() {
         isValid={allChecksPassed}
         faceDetected={faceValidationState.faceDetected}
         validationChecks={faceValidationState.validationChecks}
+        livePdDebug={faceValidationState.livePdDebug}
+        layoutWidth={layoutSize.w}
+        layoutHeight={layoutSize.h}
+        videoMirrorX
         debugValues={{
           faceWidthPercent: faceValidationState.faceWidthPercent,
           leftEyeAR: faceValidationState.leftEyeAR,

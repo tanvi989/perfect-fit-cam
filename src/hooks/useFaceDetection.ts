@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import type { FaceLandmarks, FaceValidationState, ValidationCheck } from '@/types/face-validation';
 import { PD_DESKTOP_TARGET_DISTANCE_CM, PD_MOBILE_TARGET_DISTANCE_CM } from '@/lib/pdCaptureDistance';
 import { useMobileCaptureMode } from '@/hooks/useMobileCaptureMode';
+import { computeLivePdGeometry, type LivePdGeometryDebug } from '@/lib/irisGeometry';
 
 // MediaPipe Face Mesh landmark indices
 const LANDMARK_INDICES = {
@@ -88,9 +89,17 @@ interface UseFaceDetectionProps {
   isActive: boolean;
   /** Smoothed PD hint (mm) from the same MediaPipe geometry as the guide: iris rings + cheek width @ ~145mm. */
   pdHintOutRef?: React.MutableRefObject<number | null>;
+  /** Updated every frame when `livePdDebug` is computed — log at snap for delta vs server. */
+  livePdDebugOutRef?: React.MutableRefObject<LivePdGeometryDebug | null>;
 }
 
-export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }: UseFaceDetectionProps) {
+export function useFaceDetection({
+  videoRef,
+  canvasRef,
+  isActive,
+  pdHintOutRef,
+  livePdDebugOutRef,
+}: UseFaceDetectionProps) {
   const mobileCapture = useMobileCaptureMode();
   const thresholds = useMemo(() => getThresholds(mobileCapture), [mobileCapture]);
 
@@ -112,6 +121,7 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
     eyeLevelDelta: 0,
     steadyFrames: 0,
     landmarks: null,
+    livePdDebug: null,
     allChecksPassed: false,
     validationChecks: [],
   });
@@ -121,6 +131,7 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
   const lastProcessTime = useRef<number>(0);
   const pdHintEmaRef = useRef<number | null>(null);
   const steadyFramesRef = useRef(0);
+  const lastLivePdLogRef = useRef(0);
 
   const extractLandmarks = useCallback((landmarks: any[]): FaceLandmarks => {
     return {
@@ -372,6 +383,7 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
       if (pdHintOutRef) pdHintOutRef.current = null;
       steadyFramesRef.current = 0;
 
+      if (livePdDebugOutRef) livePdDebugOutRef.current = null;
       const newState = {
         faceDetected: false,
         faceCount: 0,
@@ -386,6 +398,7 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
         rightEyeAR: 0,
         eyeLevelDelta: 0,
         landmarks: null,
+        livePdDebug: null as LivePdGeometryDebug | null,
       };
 
       const baseChecks = generateAlignmentChecks(newState);
@@ -409,35 +422,67 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
     const meshLm = results.multiFaceLandmarks[0];
     const landmarks = extractLandmarks(meshLm);
 
-    // Background PD hint (no UI): IPD_px / face_width_px * 145mm — matches backend focal method.
+    // Live geometry (same rules as server) + background PD hint for API
     const Wv = video.videoWidth;
     const Hv = video.videoHeight;
+    let livePdDebug: LivePdGeometryDebug | null = null;
     if (Wv > 0 && Hv > 0 && meshLm.length >= 478) {
-      const irisMean = (idxs: number[]) => {
-        let sx = 0;
-        let sy = 0;
-        for (const i of idxs) {
-          sx += meshLm[i].x * Wv;
-          sy += meshLm[i].y * Hv;
-        }
-        const n = idxs.length;
-        return { x: sx / n, y: sy / n };
-      };
-      const lIris = irisMean([468, 469, 470, 471, 472]);
-      const rIris = irisMean([473, 474, 475, 476, 477]);
-      const pdPx = Math.hypot(lIris.x - rIris.x, lIris.y - rIris.y);
-      const fwPx = Math.hypot(
-        (meshLm[234].x - meshLm[454].x) * Wv,
-        (meshLm[234].y - meshLm[454].y) * Hv,
-      );
-      if (fwPx > 20 && pdPx > 1) {
+      livePdDebug = computeLivePdGeometry(meshLm, Wv, Hv);
+      if (livePdDebugOutRef) livePdDebugOutRef.current = livePdDebug;
+
+      if (livePdDebug && livePdDebug.faceWidthCheekPx > 20 && livePdDebug.pdPxUsed > 1) {
         const knownFaceMm = 145.0;
-        const pdMm = pdPx * (knownFaceMm / fwPx);
+        const pdMm = livePdDebug.pdPxUsed * (knownFaceMm / livePdDebug.faceWidthCheekPx);
         const prev = pdHintEmaRef.current;
         const smoothed = prev == null ? pdMm : prev * 0.82 + pdMm * 0.18;
         pdHintEmaRef.current = smoothed;
         if (pdHintOutRef) pdHintOutRef.current = smoothed;
       }
+
+      const pdDebugParam =
+        typeof window !== 'undefined' &&
+        (import.meta.env.DEV || /(?:^|[?&])pddebug=1(?:&|$)/.test(window.location.search));
+      if (livePdDebug && pdDebugParam) {
+        const now = performance.now();
+        if (now - lastLivePdLogRef.current > 550) {
+          lastLivePdLogRef.current = now;
+          console.log(
+            '%c[PD live debug — video px, same math as server iris_landmark_service]',
+            'background:#0d47a1;color:#fff;padding:2px 6px;border-radius:3px',
+            {
+              frame: { w: livePdDebug.videoWidth, h: livePdDebug.videoHeight },
+              left_iris_px: livePdDebug.leftIrisCenterPx,
+              right_iris_px: livePdDebug.rightIrisCenterPx,
+              iris_diam_px: {
+                L: livePdDebug.irisDiameterLeftPx,
+                R: livePdDebug.irisDiameterRightPx,
+                mean: livePdDebug.irisDiameterMeanPx,
+              },
+              pd_px: {
+                horizontal: livePdDebug.pdPxHorizontal,
+                euclidean: livePdDebug.pdPxEuclidean,
+                used: livePdDebug.pdPxUsed,
+                geometry: livePdDebug.pdGeometry,
+              },
+              scale: {
+                s_iris_mm_per_px: livePdDebug.sIrisMmPerPx,
+                s_face_mm_per_px: livePdDebug.sFaceMmPerPx,
+                face_width_cheek_px: livePdDebug.faceWidthCheekPx,
+              },
+              preview_mm: {
+                iris_ruler: livePdDebug.pdMmIrisScaleOnly,
+                face_ruler: livePdDebug.pdMmFaceScaleOnly,
+              },
+              ipd_px_over_iris_diam: livePdDebug.ipdOverIrisDiam,
+              ratio_ok: livePdDebug.pdRatioOk,
+              level_ratio: livePdDebug.levelRatio,
+              pd_hint_mm_smoothed: pdHintEmaRef.current,
+            },
+          );
+        }
+      }
+    } else if (livePdDebugOutRef) {
+      livePdDebugOutRef.current = null;
     }
 
     const headTilt = calculateHeadTilt(landmarks);
@@ -478,6 +523,7 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
       rightEyeAR,
       eyeLevelDelta,
       landmarks,
+      livePdDebug,
       faceInOval: inOval,
       faceOffsetX: offsetX,
       faceOffsetY: offsetY,
@@ -527,6 +573,7 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
     calculateFaceInOval,
     pdHintOutRef,
     thresholds.steadyFramesRequired,
+    livePdDebugOutRef,
   ]);
 
   useEffect(() => {

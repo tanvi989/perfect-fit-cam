@@ -1,6 +1,8 @@
 import { cn } from '@/lib/utils';
 import { PD_DESKTOP_TARGET_DISTANCE_CM, PD_MOBILE_TARGET_DISTANCE_CM } from '@/lib/pdCaptureDistance';
 import { useMobileCaptureMode } from '@/hooks/useMobileCaptureMode';
+import type { LivePdGeometryDebug } from '@/lib/irisGeometry';
+import { irisSegmentLayoutPercents } from '@/lib/videoCoverMap';
 import { ValidationCheck } from '@/types/face-validation';
 import { Check, X } from 'lucide-react';
 
@@ -24,17 +26,156 @@ interface FaceGuideOverlayProps {
   faceDetected: boolean;
   validationChecks: ValidationCheck[];
   debugValues?: DebugValues;
+  /** Live full-res iris PD geometry (video pixels); line overlay maps to screen with object-fit: cover */
+  livePdDebug?: LivePdGeometryDebug | null;
+  layoutWidth?: number;
+  layoutHeight?: number;
+  /** Match <video style={{ transform: scaleX(-1) }}> */
+  videoMirrorX?: boolean;
 }
 
-export function FaceGuideOverlay({ isValid, faceDetected, validationChecks, debugValues }: FaceGuideOverlayProps) {
+function fmt(n: number, d = 1): string {
+  return Number.isFinite(n) ? n.toFixed(d) : '—';
+}
+
+export function FaceGuideOverlay({
+  isValid,
+  faceDetected,
+  validationChecks,
+  debugValues,
+  livePdDebug,
+  layoutWidth = 0,
+  layoutHeight = 0,
+  videoMirrorX = false,
+}: FaceGuideOverlayProps) {
   const mobileCapture = useMobileCaptureMode();
   const maxTilt = debugValues?.maxHeadTilt ?? 6;
   const maxRot = debugValues?.maxHeadRotation ?? 8;
   const maxEyeY = debugValues?.maxEyeYDelta ?? 0.012;
   const steadyReq = debugValues?.steadyRequired ?? 10;
 
+  const showPdOverlay =
+    faceDetected &&
+    livePdDebug != null &&
+    layoutWidth > 40 &&
+    layoutHeight > 40;
+
+  const irisLayout = showPdOverlay
+    ? irisSegmentLayoutPercents(livePdDebug, layoutWidth, layoutHeight, videoMirrorX)
+    : null;
+
   return (
     <div className="absolute inset-0 pointer-events-none z-10">
+      {/* Full-screen iris ↔ iris chord (video px labeled) — debug */}
+      {showPdOverlay && irisLayout && (
+        <svg
+          className="absolute inset-0 w-full h-full z-[15]"
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+          aria-hidden
+        >
+          <defs>
+            <filter id="pd-glow" x="-20%" y="-20%" width="140%" height="140%">
+              <feDropShadow dx="0" dy="0" stdDeviation="0.25" floodColor="#fbbf24" floodOpacity="0.9" />
+            </filter>
+          </defs>
+          <line
+            x1={irisLayout.left.leftPct}
+            y1={irisLayout.left.topPct}
+            x2={irisLayout.right.leftPct}
+            y2={irisLayout.right.topPct}
+            stroke="rgba(250,204,21,0.95)"
+            strokeWidth={0.35}
+            vectorEffect="nonScalingStroke"
+            filter="url(#pd-glow)"
+          />
+          <circle
+            cx={irisLayout.left.leftPct}
+            cy={irisLayout.left.topPct}
+            r={0.9}
+            fill="rgba(34,211,238,0.95)"
+          />
+          <circle
+            cx={irisLayout.right.leftPct}
+            cy={irisLayout.right.topPct}
+            r={0.9}
+            fill="rgba(34,211,238,0.95)"
+          />
+          <text
+            x={(irisLayout.left.leftPct + irisLayout.right.leftPct) / 2}
+            y={(irisLayout.left.topPct + irisLayout.right.topPct) / 2 - 1.2}
+            fill="white"
+            fontSize="2.4"
+            fontWeight="700"
+            textAnchor="middle"
+            stroke="rgba(0,0,0,0.85)"
+            strokeWidth="0.15"
+            paintOrder="stroke"
+          >
+            {`H ${fmt(livePdDebug.pdPxHorizontal, 1)} · E ${fmt(livePdDebug.pdPxEuclidean, 1)} px`}
+          </text>
+          <text
+            x={irisLayout.left.leftPct}
+            y={Math.max(4, irisLayout.left.topPct - 2)}
+            fill="white"
+            fontSize="2.2"
+            textAnchor="middle"
+            stroke="rgba(0,0,0,0.8)"
+            strokeWidth="0.12"
+            paintOrder="stroke"
+          >
+            L
+          </text>
+          <text
+            x={irisLayout.right.leftPct}
+            y={Math.max(4, irisLayout.right.topPct - 2)}
+            fill="white"
+            fontSize="2.2"
+            textAnchor="middle"
+            stroke="rgba(0,0,0,0.8)"
+            strokeWidth="0.12"
+            paintOrder="stroke"
+          >
+            R
+          </text>
+        </svg>
+      )}
+
+      {showPdOverlay && livePdDebug && (
+        <div className="absolute top-[5.5rem] left-0 right-0 z-[16] flex justify-center px-1">
+          <div className="bg-black/82 backdrop-blur-md rounded-lg px-2 py-1.5 max-w-[min(100%,520px)] border border-amber-500/40 shadow-lg">
+            <div className="text-[9px] font-mono text-amber-100/95 leading-tight space-y-0.5">
+              <div className="text-amber-300 font-semibold uppercase tracking-wide">PD debug — video pixels</div>
+              <div>
+                Frame: {livePdDebug.videoWidth}×{livePdDebug.videoHeight}px · L iris Ø {fmt(livePdDebug.irisDiameterLeftPx, 2)}{' '}
+                R Ø {fmt(livePdDebug.irisDiameterRightPx, 2)} · mean Ø {fmt(livePdDebug.irisDiameterMeanPx, 2)}
+              </div>
+              <div>
+                Centres: L ({fmt(livePdDebug.leftIrisCenterPx.x, 1)}, {fmt(livePdDebug.leftIrisCenterPx.y, 1)}) · R (
+                {fmt(livePdDebug.rightIrisCenterPx.x, 1)}, {fmt(livePdDebug.rightIrisCenterPx.y, 1)})
+              </div>
+              <div>
+                IPD px: horiz {fmt(livePdDebug.pdPxHorizontal, 2)} · euclid {fmt(livePdDebug.pdPxEuclidean, 2)} ·{' '}
+                <span className="text-white font-bold">used {fmt(livePdDebug.pdPxUsed, 2)}</span> (
+                {livePdDebug.pdGeometry}) · cheek W {fmt(livePdDebug.faceWidthCheekPx, 1)} px
+              </div>
+              <div>
+                Scale: s_iris {fmt(livePdDebug.sIrisMmPerPx, 4)} mm/px · s_face {fmt(livePdDebug.sFaceMmPerPx, 4)} mm/px ·
+                IPD/Ø {fmt(livePdDebug.ipdOverIrisDiam, 2)} {livePdDebug.pdRatioOk ? '✓' : '⚠'}
+              </div>
+              <div>
+                Preview mm (client): iris-ruler {fmt(livePdDebug.pdMmIrisScaleOnly, 2)} · face-ruler{' '}
+                {fmt(livePdDebug.pdMmFaceScaleOnly, 2)} · levelRatio {livePdDebug.levelRatio.toFixed(5)}
+              </div>
+              <div className="text-white/60 pt-0.5">
+                Live console: add <span className="text-white">?pddebug=1</span> to URL · after snap see{' '}
+                <span className="text-white">[PD SNAP REPORT]</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Center guide oval */}
       <div className="absolute inset-0 flex items-center justify-center">
         <div
