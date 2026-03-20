@@ -1,6 +1,7 @@
 import { useCaptureData } from '@/context/CaptureContext';
 import type {
   ApiClientCapture,
+  ApiEmotionEstimate,
   ApiEyewearInsights,
   ApiGenderEstimate,
 } from '@/types/face-validation';
@@ -13,9 +14,42 @@ import {
   User,
   ShoppingBag,
   Smartphone,
+  Smile,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+
+function formatEmotionLabel(raw: string): string {
+  const t = raw.trim();
+  if (!t) return '';
+  return t.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function pickEmotionEstimate(data: {
+  emotion?: ApiEmotionEstimate;
+  apiResponse?: { landmarks?: { emotion?: ApiEmotionEstimate }; emotion?: ApiEmotionEstimate };
+}): ApiEmotionEstimate | null {
+  const candidates = [
+    data.emotion,
+    data.apiResponse?.landmarks?.emotion,
+    data.apiResponse?.emotion,
+  ];
+  for (const raw of candidates) {
+    if (!raw || typeof raw !== 'object') continue;
+    const label = (raw as ApiEmotionEstimate).label;
+    if (typeof label === 'string' && label.trim().length > 0 && label.trim() !== 'unknown') {
+      return { ...(raw as ApiEmotionEstimate), label: label.trim() };
+    }
+  }
+  for (const raw of candidates) {
+    if (!raw || typeof raw !== 'object') continue;
+    const label = (raw as ApiEmotionEstimate).label;
+    if (typeof label === 'string' && label.trim().length > 0) {
+      return { ...(raw as ApiEmotionEstimate), label: label.trim() };
+    }
+  }
+  return null;
+}
 
 function pickGenderEstimate(data: {
   gender?: ApiGenderEstimate;
@@ -67,6 +101,7 @@ export function MeasurementsTab() {
 
   const { measurements, processedImageDataUrl, glassesDetected, faceShape } = capturedData;
   const gender = pickGenderEstimate(capturedData);
+  const emotion = pickEmotionEstimate(capturedData);
   const eyewear = pickEyewear(capturedData);
   const clientCapture = pickClientCapture(capturedData);
 
@@ -161,6 +196,37 @@ export function MeasurementsTab() {
                 {capturedData.apiResponse.landmarks.scale.pd_note}
               </p>
             )}
+            {(() => {
+              const sc = capturedData.apiResponse?.landmarks?.scale;
+              if (!sc || (sc.pd_px_used == null && sc.pd_px_horizontal == null)) return null;
+              const fmt = (n: number | undefined | null) =>
+                n != null && Number.isFinite(n) ? n.toFixed(1) : '—';
+              return (
+                <div className="mt-4 rounded-lg border border-border/80 bg-muted/40 px-3 py-2 text-left max-w-md mx-auto">
+                  <p className="text-xs font-medium text-foreground mb-1.5">Iris IPD in this photo (pixels)</p>
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    Values are in <span className="text-foreground/90">image pixels</span> at capture resolution
+                    — they change with distance/zoom; mm PD uses these together with iris size.
+                  </p>
+                  <dl className="mt-2 grid grid-cols-[1fr_auto] gap-x-3 gap-y-1 text-xs">
+                    <dt className="text-muted-foreground">Used for mm scale</dt>
+                    <dd className="font-mono text-right tabular-nums">{fmt(sc.pd_px_used)} px</dd>
+                    <dt className="text-muted-foreground">Horizontal (Δx iris centres)</dt>
+                    <dd className="font-mono text-right tabular-nums">{fmt(sc.pd_px_horizontal)} px</dd>
+                    <dt className="text-muted-foreground">Euclidean (2D)</dt>
+                    <dd className="font-mono text-right tabular-nums">
+                      {fmt(sc.pd_px_euclidean_raw ?? sc.pd_px_euclidean)} px
+                    </dd>
+                    {sc.pd_geometry && (
+                      <>
+                        <dt className="text-muted-foreground">Geometry</dt>
+                        <dd className="text-right text-[11px] capitalize">{sc.pd_geometry.replace(/_/g, ' ')}</dd>
+                      </>
+                    )}
+                  </dl>
+                </div>
+              );
+            })()}
           </div>
 
           <div className="grid grid-cols-2 gap-4 mt-4 pt-4 border-t border-border">
@@ -293,35 +359,70 @@ export function MeasurementsTab() {
           </CardTitle>
         </CardHeader>
         <CardContent>
-          {!gender ? (
+          {!gender && !emotion ? (
             <div className="space-y-2 text-sm text-muted-foreground">
-              <p>No gender data in this capture response.</p>
+              <p>No presentation (ML) data in this capture response.</p>
               <p className="text-xs">
                 Restart the backend (latest <code className="text-foreground">/landmarks/detect</code> returns{' '}
-                <code className="text-foreground">landmarks.gender</code>), then take a new photo. If you only
+                <code className="text-foreground">landmarks.gender</code> /{' '}
+                <code className="text-foreground">landmarks.emotion</code>), then take a new photo. If you only
                 navigated here from an old session, run capture again.
               </p>
             </div>
           ) : (
-            <>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-2xl font-semibold capitalize">{gender.label}</span>
-                {gender.low_confidence && (
-                  <Badge variant="outline" className="text-yellow-700 border-yellow-600/40">
-                    Low certainty
-                  </Badge>
-                )}
-              </div>
-              <p className="text-sm text-muted-foreground mt-2">
-                Model confidence: {(gender.confidence * 100).toFixed(1)}%
-                {gender.model ? ` · ${gender.model}` : ''}
+            <div className="space-y-6">
+              {gender ? (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Gender</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-2xl font-semibold capitalize">{gender.label}</span>
+                    {gender.low_confidence && (
+                      <Badge variant="outline" className="text-yellow-700 border-yellow-600/40">
+                        Low certainty
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-2">
+                    Model confidence: {(gender.confidence * 100).toFixed(1)}%
+                    {gender.model ? ` · ${gender.model}` : ''}
+                  </p>
+                  {gender.error && <p className="text-xs text-destructive mt-2">{gender.error}</p>}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground">No gender estimate in this response.</p>
+              )}
+
+              {emotion ? (
+                <div className="pt-2 border-t border-border/60">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1.5">
+                    <Smile className="h-3.5 w-3.5" />
+                    Expression
+                  </p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-2xl font-semibold">{formatEmotionLabel(emotion.label)}</span>
+                    {emotion.low_confidence && (
+                      <Badge variant="outline" className="text-yellow-700 border-yellow-600/40">
+                        Low certainty
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-sm text-muted-foreground mt-2">
+                    Model confidence: {(emotion.confidence * 100).toFixed(1)}%
+                    {emotion.model ? ` · ${emotion.model}` : ''}
+                  </p>
+                  {emotion.error && <p className="text-xs text-destructive mt-2">{emotion.error}</p>}
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground border-t border-border/60 pt-4">
+                  No expression estimate in this response.
+                </p>
+              )}
+
+              <p className="text-xs text-muted-foreground">
+                Automated guesses from facial appearance — not identity or mood diagnosis. Use a clear, front-facing
+                photo for best results.
               </p>
-              {gender.error && <p className="text-xs text-destructive mt-2">{gender.error}</p>}
-              <p className="text-xs text-muted-foreground mt-3">
-                Automated guess from facial appearance — not identity. Use a clear, front-facing photo for best
-                results.
-              </p>
-            </>
+            </div>
           )}
         </CardContent>
       </Card>

@@ -7,8 +7,10 @@ import { useCaptureData } from '@/context/CaptureContext';
 import { useVoiceGuidance } from '@/hooks/useVoiceGuidance';
 import { CameraPermission } from './CameraPermission';
 import { FaceGuideOverlay } from './FaceGuideOverlay';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Camera } from 'lucide-react';
+import { Button } from '@/components/ui/button';
 import { detectGlasses, removeGlasses, detectLandmarks } from '@/services/glassesApi';
+import { logPdCalculationTraceToConsole } from '@/lib/pdTraceConsole';
 import { toast } from 'sonner';
 
 export function CaptureCamera() {
@@ -147,8 +149,12 @@ export function CaptureCamera() {
       );
 
       if (!measureResult.success || !measureResult.landmarks?.mm) {
-        throw new Error('Failed to get measurements');
+        throw new Error(
+          measureResult.error?.trim() || 'Failed to get measurements (no mm in response)',
+        );
       }
+
+      logPdCalculationTraceToConsole(measureResult.landmarks);
 
       // Save data and navigate - include full API landmarks response
       setCapturedData({
@@ -159,6 +165,7 @@ export function CaptureCamera() {
         measurements: measureResult.landmarks.mm,
         faceShape: measureResult.landmarks.face_shape,
         gender: measureResult.landmarks.gender,
+        emotion: measureResult.landmarks.emotion,
         eyewear: measureResult.landmarks.eyewear,
         clientCapture: measureResult.landmarks.client_capture,
         apiResponse: measureResult,
@@ -168,7 +175,9 @@ export function CaptureCamera() {
       navigate('/results');
     } catch (err) {
       console.error('Processing error:', err);
-      toast.error('Failed to process image. Please try again.');
+      const msg =
+        err instanceof Error && err.message ? err.message : 'Failed to process image. Please try again.';
+      toast.error(msg.length > 180 ? `${msg.slice(0, 177)}…` : msg);
       setIsCapturing(false);
       setCountdown(null);
       setIsProcessing(false);
@@ -211,6 +220,38 @@ export function CaptureCamera() {
   const handleRequestCamera = useCallback(() => {
     requestCamera();
   }, [requestCamera]);
+
+  /** Manual capture when auto-alignment countdown never completes (same pipeline as auto). */
+  const handleManualSnap = useCallback(() => {
+    if (isProcessing) return;
+    if (!videoRef.current) {
+      toast.message('Camera not ready');
+      return;
+    }
+    if (!faceValidationState.faceDetected || !faceValidationState.landmarks) {
+      toast.message('Show your face in the frame first, then tap Snap');
+      return;
+    }
+    if (countdownRef.current) {
+      clearTimeout(countdownRef.current);
+      countdownRef.current = null;
+    }
+    setCountdown(null);
+    setIsCapturing(false);
+    cancelVoice();
+    captureAndProcess();
+  }, [
+    isProcessing,
+    faceValidationState.faceDetected,
+    faceValidationState.landmarks,
+    captureAndProcess,
+    cancelVoice,
+  ]);
+
+  const canManualSnap =
+    !!faceValidationState.faceDetected &&
+    !!faceValidationState.landmarks &&
+    !isProcessing;
 
   if (cameraState !== 'granted') {
     return (
@@ -275,6 +316,26 @@ export function CaptureCamera() {
             <Loader2 className="h-20 w-20 text-white animate-spin mx-auto" />
             <p className="text-white text-xl font-medium">{processingStep}</p>
           </div>
+        </div>
+      )}
+
+      {/* Manual snap — same capture as auto; use if checklist stays red */}
+      {!isProcessing && (
+        <div className="absolute bottom-0 left-0 right-0 z-30 flex flex-col items-center gap-2 pb-[max(1rem,env(safe-area-inset-bottom))] pt-2 px-4 pointer-events-none">
+          <Button
+            type="button"
+            size="lg"
+            disabled={!canManualSnap}
+            className="pointer-events-auto rounded-full h-14 px-8 text-base font-semibold shadow-lg disabled:opacity-40"
+            onClick={handleManualSnap}
+          >
+            <Camera className="h-5 w-5 mr-2" />
+            Snap photo
+          </Button>
+          <p className="pointer-events-auto text-[11px] text-white/70 text-center max-w-sm leading-snug drop-shadow-md">
+            Auto-capture runs when the checklist is green. If it won’t turn green, center your face and tap{' '}
+            <span className="text-white/90">Snap photo</span> — PD may be less accurate if alignment was off.
+          </p>
         </div>
       )}
     </div>

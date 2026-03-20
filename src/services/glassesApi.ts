@@ -57,10 +57,14 @@ export interface LandmarkMeasurements {
 export interface Scale {
   mm_per_pixel: number;
   iris_diameter_px: number;
+  pd_px_used?: number;
+  pd_px_horizontal?: number;
+  pd_px_euclidean?: number;
+  pd_px_euclidean_raw?: number;
+  pd_geometry?: string;
   pd_mm_iris_scale_only?: number;
   pd_mm_face_scale_only?: number;
   pd_prior_mm?: number;
-  pd_px_euclidean?: number;
   face_width_px?: number;
   pd_reliability?: string;
   pd_note?: string;
@@ -80,6 +84,7 @@ export interface Scale {
 export interface DebugInfo {
   pd_error_mm: number;
   expected_accuracy: string;
+  pd_calculation_trace?: Record<string, unknown> | null;
 }
 
 export interface GenderEstimate {
@@ -89,6 +94,16 @@ export interface GenderEstimate {
   model?: string | null;
   prob_male?: number;
   prob_female?: number;
+  error?: string;
+}
+
+/** FER+ emotion head from Hugging Face `onnxmodelzoo/emotion-ferplus-8` */
+export interface EmotionEstimate {
+  label: string;
+  confidence: number;
+  low_confidence?: boolean;
+  label_index?: number;
+  model?: string | null;
   error?: string;
 }
 
@@ -152,15 +167,41 @@ export type ClientCaptureInfo = ReturnType<typeof getCaptureClientInfo>;
 
 export interface LandmarksDetectResponse {
   success: boolean;
-  landmarks: {
+  /** Server-side failure message when success is false */
+  error?: string;
+  landmarks?: {
     scale: Scale;
     mm: LandmarkMeasurements;
     face_shape: string;
     debug: DebugInfo;
     gender?: GenderEstimate;
+    emotion?: EmotionEstimate;
     eyewear?: EyewearInsights;
     client_capture?: ClientCaptureInfo;
   };
+}
+
+function messageFromApiBody(data: unknown, fallback: string): string {
+  if (!data || typeof data !== 'object') return fallback;
+  const o = data as Record<string, unknown>;
+  if (typeof o.error === 'string' && o.error.trim()) return o.error.trim();
+  const d = o.detail;
+  if (typeof d === 'string' && d.trim()) return d.trim();
+  if (Array.isArray(d) && d.length > 0) {
+    try {
+      return JSON.stringify(d);
+    } catch {
+      return fallback;
+    }
+  }
+  if (d && typeof d === 'object') {
+    try {
+      return JSON.stringify(d);
+    } catch {
+      return fallback;
+    }
+  }
+  return fallback;
 }
 
 export interface SelectFrameResponse {
@@ -278,14 +319,43 @@ export async function detectLandmarks(
       body: formData,
     });
 
-    if (!response.ok) {
-      throw new Error(`Failed to detect landmarks: ${response.status}`);
+    let data: unknown;
+    try {
+      data = await response.json();
+    } catch {
+      throw new Error(
+        response.ok
+          ? 'Landmarks API returned invalid JSON'
+          : `Landmarks API HTTP ${response.status} (no JSON body)`,
+      );
     }
 
-    return response.json();
+    if (!response.ok) {
+      const msg = messageFromApiBody(data, `HTTP ${response.status}`);
+      throw new Error(`Landmarks failed (${response.status}): ${msg}`);
+    }
+
+    const parsed = data as LandmarksDetectResponse;
+    if (!parsed.success) {
+      const msg = messageFromApiBody(parsed, 'Server returned success=false');
+      throw new Error(msg);
+    }
+    if (!parsed.landmarks?.mm) {
+      throw new Error('Landmarks response missing measurements (mm)');
+    }
+
+    return parsed;
   } catch (error) {
     console.error('Landmarks detection API error:', error);
-    throw new Error('CORS error: The API server needs to allow requests from this domain. Please configure CORS on your backend.');
+    if (error instanceof Error && error.message.startsWith('Landmarks')) {
+      throw error;
+    }
+    if (error instanceof Error && (error.message.includes('fetch') || error.name === 'TypeError')) {
+      throw new Error(
+        `Cannot reach API at ${API_BASE}. Check network, HTTPS, and CORS. ${error.message}`,
+      );
+    }
+    throw error instanceof Error ? error : new Error(String(error));
   }
 }
 

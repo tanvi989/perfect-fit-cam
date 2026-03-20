@@ -98,8 +98,8 @@ export function FaceGuideOverlay({ isValid, faceDetected, validationChecks, debu
         </span>
       </div>
 
-      {/* PD-specific guidance (always visible while framing) */}
-      <div className="absolute bottom-8 left-0 right-0 text-center px-4">
+      {/* PD-specific guidance (always visible while framing) — leave room for Snap photo bar */}
+      <div className="absolute bottom-28 md:bottom-8 left-0 right-0 text-center px-4">
         <p className="text-[11px] md:text-xs text-white/85 drop-shadow-md max-w-md mx-auto leading-snug bg-black/45 rounded-lg px-3 py-2 backdrop-blur-sm">
           <span className="font-semibold text-white">For correct pupillary distance:</span>{' '}
           {mobileCapture ? (

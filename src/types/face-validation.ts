@@ -106,6 +106,16 @@ export interface ApiMeasurements {
 export interface ApiScale {
   mm_per_pixel: number;
   iris_diameter_px: number;
+  /** Iris-centre IPD chord used to convert primary PD to mm (horizontal-weighted or Euclidean). */
+  pd_px_used?: number;
+  /** Horizontal distance between iris centres in full-resolution image pixels. */
+  pd_px_horizontal?: number;
+  /** Straight-line distance between iris centres (pixels). */
+  pd_px_euclidean?: number;
+  /** Raw Euclidean IPD in px (same as pd_px_euclidean when geometry is euclidean). */
+  pd_px_euclidean_raw?: number;
+  /** horizontal_primary | euclidean — how pd_px_used was formed. */
+  pd_geometry?: string;
   /** Same iris geometry as primary, but iris-diameter scale only (no face blend / prior / hint). */
   pd_mm_iris_scale_only?: number;
   /** IPD if we assumed 145 mm bizygomatic width (weak prior). */
@@ -128,9 +138,21 @@ export interface ApiScale {
   pd_hf_method?: string | null;
 }
 
+/** Server-built step-by-step PD math + pixel chords (see `pdTraceConsole.ts`). */
+export interface ApiPdCalculationTrace {
+  summary?: string;
+  constants?: Record<string, number>;
+  pixels?: Record<string, unknown>;
+  intermediate_mm?: Record<string, unknown>;
+  scale_extra_echo?: Record<string, unknown>;
+  hf_and_extra_scale?: Record<string, unknown>;
+  formulas_plaintext?: string[];
+}
+
 export interface ApiDebug {
   pd_error_mm: number;
   expected_accuracy: string;
+  pd_calculation_trace?: ApiPdCalculationTrace | null;
 }
 
 export interface ApiGenderEstimate {
@@ -140,6 +162,16 @@ export interface ApiGenderEstimate {
   model?: string | null;
   prob_male?: number;
   prob_female?: number;
+  error?: string;
+}
+
+/** FER+ ONNX from Hugging Face; UX only — not clinical */
+export interface ApiEmotionEstimate {
+  label: string;
+  confidence: number;
+  low_confidence?: boolean;
+  label_index?: number;
+  model?: string | null;
   error?: string;
 }
 
@@ -217,6 +249,7 @@ export interface ApiLandmarks {
   face_shape: string;
   debug: ApiDebug;
   gender?: ApiGenderEstimate;
+  emotion?: ApiEmotionEstimate;
   eyewear?: ApiEyewearInsights;
   client_capture?: ApiClientCapture;
 }
@@ -250,6 +283,7 @@ export interface CapturedData {
   measurements: ApiMeasurements;
   faceShape: string;
   gender?: ApiGenderEstimate;
+  emotion?: ApiEmotionEstimate;
   eyewear?: ApiEyewearInsights;
   clientCapture?: ApiClientCapture;
   apiResponse?: ApiLandmarksResponse; // Full API response

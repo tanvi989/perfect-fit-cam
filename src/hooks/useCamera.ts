@@ -82,7 +82,7 @@ function mapCameraError(err: unknown): { state: CameraState; message: string } {
       return {
         state: 'error',
         message:
-          'Camera is blocked for this page. Open the app at http://localhost:8080 or https:// and allow access.',
+          'Camera is blocked for this page. Open the app at http://localhost: or https:// and allow access.',
       };
     }
     if (err.name === 'AbortError') {
