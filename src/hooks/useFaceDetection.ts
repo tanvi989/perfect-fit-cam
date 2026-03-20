@@ -1,10 +1,7 @@
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import type { FaceLandmarks, FaceValidationState, ValidationCheck } from '@/types/face-validation';
-import {
-  PD_DESKTOP_TARGET_DISTANCE_CM,
-  PD_MOBILE_TARGET_DISTANCE_CM,
-  isMobileCaptureViewport,
-} from '@/lib/pdCaptureDistance';
+import { PD_DESKTOP_TARGET_DISTANCE_CM, PD_MOBILE_TARGET_DISTANCE_CM } from '@/lib/pdCaptureDistance';
+import { useMobileCaptureMode } from '@/hooks/useMobileCaptureMode';
 
 // MediaPipe Face Mesh landmark indices
 const LANDMARK_INDICES = {
@@ -35,14 +32,14 @@ const getThresholds = (isMobile: boolean) => {
   if (isMobile) {
     return {
       targetDistanceCm,
-      steadyFramesRequired: 5,
+      steadyFramesRequired: 4,
       /** Very wide band — backend uses iris-scale PD; extremes still discouraged */
       targetFaceWidthPercent: 28 * distanceScale,
-      minFaceWidthPercent: 11,
-      maxFaceWidthPercent: 52,
-      maxHeadTilt: 11,
-      maxHeadRotation: 14,
-      maxEyeYDelta: 0.02,
+      minFaceWidthPercent: 9,
+      maxFaceWidthPercent: 56,
+      maxHeadTilt: 12,
+      maxHeadRotation: 18,
+      maxEyeYDelta: 0.028,
       minBrightness: 80,
       maxBrightness: 220,
       minContrast: 0.3,
@@ -53,6 +50,8 @@ const getThresholds = (isMobile: boolean) => {
       maxFaceOffsetY: 0.19,
       /** Phones in poor light were blocking everyone; PD still uses iris geometry */
       skipLightingAlignmentGate: true,
+      /** Oval is a guide only — pose + yaw checks still protect PD */
+      skipFaceOvalAlignmentGate: true,
     };
   }
 
@@ -78,6 +77,7 @@ const getThresholds = (isMobile: boolean) => {
     maxFaceOffsetX: 0.07,
     maxFaceOffsetY: 0.09,
     skipLightingAlignmentGate: false,
+    skipFaceOvalAlignmentGate: false,
   };
 };
 
@@ -91,10 +91,8 @@ interface UseFaceDetectionProps {
 }
 
 export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }: UseFaceDetectionProps) {
-  const isMobile = isMobileCaptureViewport();
-
-  const thresholdsRef = useRef(getThresholds(isMobile));
-  const thresholds = thresholdsRef.current;
+  const mobileCapture = useMobileCaptureMode();
+  const thresholds = useMemo(() => getThresholds(mobileCapture), [mobileCapture]);
 
   // Smooth the face width signal a bit to reduce jitter (especially on mobile)
   const smoothedFaceWidthPercentRef = useRef<number | null>(null);
@@ -238,19 +236,22 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
         {
           id: 'face-in-oval',
           label: 'Centered in guide',
-          passed: state.faceInOval === true,
-          message: !state.faceDetected
-            ? 'Align with the oval'
-            : state.faceInOval
-              ? 'Centered'
-              : (state.faceOffsetX || 0) > 0.04
-                ? 'Step a bit left'
-                : (state.faceOffsetX || 0) < -0.04
-                  ? 'Step a bit right'
-                  : (state.faceOffsetY || 0) > 0.04
-                    ? 'Raise camera or lower chin'
-                    : 'Lower camera or raise chin',
-          severity: state.faceInOval ? 'pass' : 'fail',
+          passed: thresholds.skipFaceOvalAlignmentGate || state.faceInOval === true,
+          message: thresholds.skipFaceOvalAlignmentGate
+            ? 'Comfortable framing — stay roughly centered'
+            : !state.faceDetected
+              ? 'Align with the oval'
+              : state.faceInOval
+                ? 'Centered'
+                : (state.faceOffsetX || 0) > 0.04
+                  ? 'Step a bit left'
+                  : (state.faceOffsetX || 0) < -0.04
+                    ? 'Step a bit right'
+                    : (state.faceOffsetY || 0) > 0.04
+                      ? 'Raise camera or lower chin'
+                      : 'Lower camera or raise chin',
+          severity:
+            thresholds.skipFaceOvalAlignmentGate || state.faceInOval ? 'pass' : 'fail',
         },
         {
           id: 'distance',
@@ -354,6 +355,7 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
       thresholds.minFaceWidthPercent,
       thresholds.targetDistanceCm,
       thresholds.skipLightingAlignmentGate,
+      thresholds.skipFaceOvalAlignmentGate,
     ],
   );
 
@@ -573,8 +575,8 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
         localFaceMesh.setOptions({
           maxNumFaces: 1,
           refineLandmarks: true,
-          minDetectionConfidence: isMobile ? 0.45 : 0.55,
-          minTrackingConfidence: isMobile ? 0.45 : 0.55,
+          minDetectionConfidence: mobileCapture ? 0.4 : 0.55,
+          minTrackingConfidence: mobileCapture ? 0.4 : 0.55,
         });
 
         localFaceMesh.onResults(processResults);
@@ -630,7 +632,7 @@ export function useFaceDetection({ videoRef, canvasRef, isActive, pdHintOutRef }
       }
       faceMeshRef.current = null;
     };
-  }, [isActive, videoRef, processResults, isMobile]);
+  }, [isActive, videoRef, processResults, mobileCapture]);
 
   return validationState;
 }

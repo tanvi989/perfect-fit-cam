@@ -1,8 +1,6 @@
 import { cn } from '@/lib/utils';
-import {
-  PD_DESKTOP_TARGET_DISTANCE_CM,
-  PD_MOBILE_TARGET_DISTANCE_CM,
-} from '@/lib/pdCaptureDistance';
+import { PD_DESKTOP_TARGET_DISTANCE_CM, PD_MOBILE_TARGET_DISTANCE_CM } from '@/lib/pdCaptureDistance';
+import { useMobileCaptureMode } from '@/hooks/useMobileCaptureMode';
 import { ValidationCheck } from '@/types/face-validation';
 import { Check, X } from 'lucide-react';
 
@@ -29,6 +27,7 @@ interface FaceGuideOverlayProps {
 }
 
 export function FaceGuideOverlay({ isValid, faceDetected, validationChecks, debugValues }: FaceGuideOverlayProps) {
+  const mobileCapture = useMobileCaptureMode();
   const maxTilt = debugValues?.maxHeadTilt ?? 6;
   const maxRot = debugValues?.maxHeadRotation ?? 8;
   const maxEyeY = debugValues?.maxEyeYDelta ?? 0.012;
@@ -103,16 +102,18 @@ export function FaceGuideOverlay({ isValid, faceDetected, validationChecks, debu
       <div className="absolute bottom-8 left-0 right-0 text-center px-4">
         <p className="text-[11px] md:text-xs text-white/85 drop-shadow-md max-w-md mx-auto leading-snug bg-black/45 rounded-lg px-3 py-2 backdrop-blur-sm">
           <span className="font-semibold text-white">For correct pupillary distance:</span>{' '}
-          <span className="md:hidden">
-            Face the camera straight on, eyes level. Use a{' '}
-            <span className="text-white">comfortable selfie distance</span> (slightly bent arm, about{' '}
-            {PD_MOBILE_TARGET_DISTANCE_CM} cm) — not full reach. Match the oval, then hold steady until the
-            checklist turns green.
-          </span>
-          <span className="hidden md:inline">
-            Face the camera directly (no angle), keep eyes level, sit ~{PD_DESKTOP_TARGET_DISTANCE_CM} cm from
-            the webcam, fill the oval, and hold steady until the checklist turns green.
-          </span>
+          {mobileCapture ? (
+            <>
+              Face the camera straight on, eyes level. Hold the phone at a{' '}
+              <span className="text-white">comfortable selfie distance</span> (~{PD_MOBILE_TARGET_DISTANCE_CM} cm —
+              no need to reach far). Roughly fill the oval, then hold steady until the checklist turns green.
+            </>
+          ) : (
+            <>
+              Face the camera directly (no angle), keep eyes level, sit ~{PD_DESKTOP_TARGET_DISTANCE_CM} cm from
+              the webcam, fill the oval, and hold steady until the checklist turns green.
+            </>
+          )}
         </p>
       </div>
 
