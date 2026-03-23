@@ -45,7 +45,8 @@ export function PdIrisAdminDebugPanel({ summary: irisPdSummary, variant = 'card'
       {hasDiam && (
         <div className="rounded-md border border-primary/30 bg-primary/[0.08] px-3 py-2.5 text-sm text-left">
           <p className="text-xs font-bold text-foreground mb-1">
-            Iris size in pixels (diameter Ø — min. circle on 5-point iris ring; used as mm/px ruler)
+            Iris size in pixels (diameter Ø — limbus edge chords on MediaPipe iris ring; server may inflate mean
+            when IPD/iris ratio is implausibly high; used as mm/px ruler)
           </p>
           <p className="font-medium text-foreground/95 tabular-nums">
             <span className="text-muted-foreground font-normal">Left iris Ø</span>{' '}

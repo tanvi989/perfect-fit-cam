@@ -430,9 +430,9 @@ export function useFaceDetection({
       livePdDebug = computeLivePdGeometry(meshLm, Wv, Hv);
       if (livePdDebugOutRef) livePdDebugOutRef.current = livePdDebug;
 
-      if (livePdDebug && livePdDebug.faceWidthCheekPx > 20 && livePdDebug.pdPxUsed > 1) {
-        const knownFaceMm = 145.0;
-        const pdMm = livePdDebug.pdPxUsed * (knownFaceMm / livePdDebug.faceWidthCheekPx);
+      // Iris-scale PD only — face-width hint assumed 145mm bizygomatic width and inflates PD on narrow/wide faces.
+      if (livePdDebug && livePdDebug.pdPxUsed > 1 && Number.isFinite(livePdDebug.pdMmIrisScaleOnly)) {
+        const pdMm = livePdDebug.pdMmIrisScaleOnly;
         const prev = pdHintEmaRef.current;
         const smoothed = prev == null ? pdMm : prev * 0.82 + pdMm * 0.18;
         pdHintEmaRef.current = smoothed;

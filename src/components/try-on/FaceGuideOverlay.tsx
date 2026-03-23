@@ -1,7 +1,13 @@
 import { cn } from '@/lib/utils';
 import { PD_DESKTOP_TARGET_DISTANCE_CM, PD_MOBILE_TARGET_DISTANCE_CM } from '@/lib/pdCaptureDistance';
 import { useMobileCaptureMode } from '@/hooks/useMobileCaptureMode';
-import type { LivePdGeometryDebug } from '@/lib/irisGeometry';
+import {
+  PD_ADULT_MAX_MM,
+  PD_ADULT_MIN_MM,
+  PD_PEDIATRIC_MAX_MM,
+  PD_PEDIATRIC_MIN_MM,
+  type LivePdGeometryDebug,
+} from '@/lib/irisGeometry';
 import { irisSegmentLayoutPercents } from '@/lib/videoCoverMap';
 import { ValidationCheck } from '@/types/face-validation';
 import { Check, X } from 'lucide-react';
@@ -36,6 +42,11 @@ interface FaceGuideOverlayProps {
 
 function fmt(n: number, d = 1): string {
   return Number.isFinite(n) ? n.toFixed(d) : '—';
+}
+
+/** Match server display: 0.5 mm steps */
+function pdDisplayHalfMm(mm: number): number {
+  return Math.round(mm * 2) / 2;
 }
 
 export function FaceGuideOverlay({
@@ -148,7 +159,10 @@ export function FaceGuideOverlay({
               <div className="text-amber-300 font-semibold uppercase tracking-wide">PD debug — video pixels</div>
               <div>
                 Frame: {livePdDebug.videoWidth}×{livePdDebug.videoHeight}px · L iris Ø {fmt(livePdDebug.irisDiameterLeftPx, 2)}{' '}
-                R Ø {fmt(livePdDebug.irisDiameterRightPx, 2)} · mean Ø {fmt(livePdDebug.irisDiameterMeanPx, 2)}
+                R Ø {fmt(livePdDebug.irisDiameterRightPx, 2)} · mean Ø{' '}
+                {livePdDebug.ipdIrisRatioCorrection !== 'ok'
+                  ? `${fmt(livePdDebug.irisDiameterMeanPx, 2)}→${fmt(livePdDebug.irisDiameterMeanPxCorrected, 2)}`
+                  : fmt(livePdDebug.irisDiameterMeanPx, 2)}
               </div>
               <div>
                 Centres: L ({fmt(livePdDebug.leftIrisCenterPx.x, 1)}, {fmt(livePdDebug.leftIrisCenterPx.y, 1)}) · R (
@@ -220,6 +234,65 @@ export function FaceGuideOverlay({
           />
         </div>
       </div>
+
+      {/* WebAR live PD — same iris geometry as server; adult 54–74 mm or child heuristic ~40–58 mm */}
+      {showPdOverlay && livePdDebug && (
+        <div className="absolute bottom-36 md:bottom-28 left-0 right-0 z-[17] flex justify-center px-3 pointer-events-none">
+          <div className="bg-gradient-to-br from-slate-950/92 to-black/88 backdrop-blur-md rounded-2xl px-4 py-3 max-w-[min(100%,380px)] border border-cyan-500/35 shadow-xl text-center">
+            <div className="text-[10px] uppercase tracking-wider text-cyan-200/90 font-semibold mb-1">
+              WebAR · live PD (iris-scale preview)
+              {livePdDebug.likelyPediatricHeuristic && (
+                <span className="block normal-case text-violet-200/95 font-normal mt-0.5">
+                  Child / small-head heuristic — not using adult 54–74 mm band
+                </span>
+              )}
+            </div>
+            <div className="text-3xl font-bold text-white tabular-nums tracking-tight">
+              {pdDisplayHalfMm(livePdDebug.pdMmIrisScaleOnly).toFixed(1)}{' '}
+              <span className="text-lg font-semibold text-white/80">mm</span>
+            </div>
+            <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-[11px]">
+              <span
+                className={cn(
+                  'rounded-full px-2.5 py-0.5 font-medium',
+                  livePdDebug.likelyPediatricHeuristic
+                    ? livePdDebug.pdInTypicalPediatricRange
+                      ? 'bg-emerald-500/25 text-emerald-100 border border-emerald-400/40'
+                      : 'bg-amber-500/20 text-amber-100 border border-amber-400/35'
+                    : livePdDebug.pdInTypicalAdultRange
+                      ? 'bg-emerald-500/25 text-emerald-100 border border-emerald-400/40'
+                      : 'bg-amber-500/20 text-amber-100 border border-amber-400/35',
+                )}
+              >
+                {livePdDebug.likelyPediatricHeuristic
+                  ? livePdDebug.pdInTypicalPediatricRange
+                    ? `Rough child range ${PD_PEDIATRIC_MIN_MM}–${PD_PEDIATRIC_MAX_MM} mm ✓`
+                    : `Rough child range ${PD_PEDIATRIC_MIN_MM}–${PD_PEDIATRIC_MAX_MM} mm — lighting / distance`
+                  : livePdDebug.pdInTypicalAdultRange
+                    ? `Typical adult range ${PD_ADULT_MIN_MM}–${PD_ADULT_MAX_MM} mm ✓`
+                    : `Target ${PD_ADULT_MIN_MM}–${PD_ADULT_MAX_MM} mm — adjust distance & face square`}
+              </span>
+              <span
+                className={cn(
+                  'rounded-full px-2.5 py-0.5 border font-medium',
+                  livePdDebug.arPdPreviewQuality === 'excellent' &&
+                    'bg-emerald-600/30 text-emerald-50 border-emerald-400/50',
+                  livePdDebug.arPdPreviewQuality === 'good' &&
+                    'bg-sky-600/25 text-sky-50 border-sky-400/40',
+                  livePdDebug.arPdPreviewQuality === 'fair' &&
+                    'bg-white/10 text-white/85 border-white/20',
+                )}
+              >
+                AR {livePdDebug.arPdPreviewQuality}
+              </span>
+            </div>
+            <p className="text-[9px] text-white/55 mt-2 leading-snug">
+              Overlays follow iris centres in real time. Final PD uses the captured photo on the server; use a credit
+              card at cheek depth for maximum accuracy.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Primary instruction */}
       <div className="absolute top-6 left-0 right-0 text-center px-4">
